@@ -1,25 +1,18 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { BullModule } from '@nestjs/bullmq';
+import { ConfigModule } from '@nestjs/config';
+import { validateEnv } from './config/env.validation';
+import { QueueModule } from './queue/queue.module';
+import { WhatsappClientModule } from './whatsapp/client/whatsapp.module';
+import { WebhookModule } from './whatsapp/webhook/webhook.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
-    BullModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        connection: {
-          host: configService.get<string>('REDIS_HOST'),
-          port: configService.get<number>('REDIS_PORT'),
-        },
-      }),
-    }),
-    BullModule.registerQueue({
-      name: 'whatsapp-messages',
-    }),
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
+    QueueModule,
+    WhatsappClientModule,
+    WebhookModule,
   ],
   controllers: [AppController],
   providers: [AppService],

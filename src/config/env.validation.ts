@@ -13,9 +13,12 @@ export const envSchema = z.object({
   WHATSAPP_PHONE_NUMBER_ID: z.string().min(1),
   WHATSAPP_BUSINESS_ACCOUNT_ID: z.string().min(1),
   WEBHOOK_VERIFY_TOKEN: z.string().min(1),
+  GRAPH_API_VERSION: z.string().min(1),
   // Not required yet — we don't have it from the Meta App Dashboard. Signature
   // verification is skipped (with a startup warning) while this is unset.
   META_APP_SECRET: z.string().min(1).optional(),
+
+  ASSEMBLYAI_API_KEY: z.string().min(1),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

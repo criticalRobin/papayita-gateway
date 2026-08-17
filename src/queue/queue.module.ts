@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { WhatsappClientModule } from '../whatsapp/client/whatsapp.module';
+import { SttModule } from '../stt/stt.module';
 import { WhatsappInboundProcessor } from './processors/whatsapp-inbound.processor';
 
 @Module({
@@ -24,6 +25,7 @@ import { WhatsappInboundProcessor } from './processors/whatsapp-inbound.processo
       },
     }),
     WhatsappClientModule,
+    SttModule,
   ],
   providers: [WhatsappInboundProcessor],
   exports: [BullModule],

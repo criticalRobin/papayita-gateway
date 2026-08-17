@@ -3,6 +3,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { WhatsappClientModule } from '../whatsapp/client/whatsapp.module';
 import { SttModule } from '../stt/stt.module';
+import { ClassificationModule } from '../classification/classification.module';
+import { ConversationStateModule } from '../conversation-state/conversation-state.module';
 import { WhatsappInboundProcessor } from './processors/whatsapp-inbound.processor';
 
 @Module({
@@ -26,6 +28,8 @@ import { WhatsappInboundProcessor } from './processors/whatsapp-inbound.processo
     }),
     WhatsappClientModule,
     SttModule,
+    ClassificationModule,
+    ConversationStateModule,
   ],
   providers: [WhatsappInboundProcessor],
   exports: [BullModule],

@@ -19,6 +19,16 @@ export const envSchema = z.object({
   META_APP_SECRET: z.string().min(1).optional(),
 
   ASSEMBLYAI_API_KEY: z.string().min(1),
+
+  // Not required — code defaults to './.cache/transformers' if unset.
+  TRANSFORMERS_CACHE_DIR: z.string().min(1).optional(),
+  CLASSIFICATION_CONFIDENCE_THRESHOLD: z.coerce
+    .number()
+    .min(0)
+    .max(1)
+    .default(0.45),
+
+  CONVERSATION_STATE_TTL_SECONDS: z.coerce.number().int().positive().default(900),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

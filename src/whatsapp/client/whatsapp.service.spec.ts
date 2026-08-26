@@ -155,4 +155,52 @@ describe('WhatsappService', () => {
       ).rejects.toThrow(TerminalWhatsappError);
     });
   });
+
+  describe('sendCtaMessage', () => {
+    it('posts an interactive cta_url message to the Graph API', async () => {
+      const post = jest.fn().mockReturnValueOnce(of({ data: {} }));
+      const httpService = { post } as unknown as HttpService;
+      const service = new WhatsappService(httpService, config);
+
+      await service.sendCtaMessage(
+        '5219999999999',
+        'Vincula tu cuenta',
+        'Iniciar sesión',
+        'https://webview.test/login?code=abc',
+      );
+
+      expect(post).toHaveBeenCalledWith(
+        'https://graph.facebook.com/v21.0/phone-id/messages',
+        {
+          messaging_product: 'whatsapp',
+          to: '5219999999999',
+          type: 'interactive',
+          interactive: {
+            type: 'cta_url',
+            body: { text: 'Vincula tu cuenta' },
+            action: {
+              name: 'cta_url',
+              parameters: {
+                display_text: 'Iniciar sesión',
+                url: 'https://webview.test/login?code=abc',
+              },
+            },
+          },
+        },
+        { headers: { Authorization: 'Bearer token' } },
+      );
+    });
+
+    it('maps a 5xx failure to RetryableWhatsappError', async () => {
+      const post = jest
+        .fn()
+        .mockReturnValueOnce(throwError(() => axiosError(500)));
+      const httpService = { post } as unknown as HttpService;
+      const service = new WhatsappService(httpService, config);
+
+      await expect(
+        service.sendCtaMessage('5219999999999', 'body', 'button', 'https://x'),
+      ).rejects.toThrow(RetryableWhatsappError);
+    });
+  });
 });

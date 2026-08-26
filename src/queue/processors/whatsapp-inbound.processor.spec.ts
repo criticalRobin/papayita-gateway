@@ -1,3 +1,4 @@
+import type { ConfigService } from '@nestjs/config';
 import type { Job } from 'bullmq';
 import type { WhatsappClient } from '../../whatsapp/client/whatsapp-client.interface';
 import {
@@ -9,6 +10,8 @@ import { RetryableSttError, TerminalSttError } from '../../stt/stt.errors';
 import type { ClassificationService } from '../../classification/classification.service';
 import type { ConversationStateService } from '../../conversation-state/conversation-state.service';
 import { createIdleRecord } from '../../conversation-state/domain/state-machine';
+import type { AuthService } from '../../auth/auth.service';
+import type { WebviewAuthService } from '../../webview-auth/webview-auth.service';
 import type { LlmClient } from '../../extraction/llm-client.interface';
 import {
   InboundMessageJobDto,
@@ -22,46 +25,159 @@ function makeJob(data: InboundMessageJobDto): Job<InboundMessageJobDto> {
 
 describe('WhatsappInboundProcessor', () => {
   let sendTextMessage: jest.Mock;
+  let sendCtaMessage: jest.Mock;
   let downloadMedia: jest.Mock;
   let markAsRead: jest.Mock;
   let transcribe: jest.Mock;
   let classify: jest.Mock;
   let getState: jest.Mock;
   let extract: jest.Mock;
+  let getValidToken: jest.Mock;
+  let mintLoginCode: jest.Mock;
   let client: WhatsappClient;
   let sttClient: SttClient;
   let llmClient: LlmClient;
   let classificationService: ClassificationService;
   let conversationStateService: ConversationStateService;
+  let authService: AuthService;
+  let webviewAuthService: WebviewAuthService;
+  let config: ConfigService;
   let processor: WhatsappInboundProcessor;
 
   beforeEach(() => {
     sendTextMessage = jest.fn().mockResolvedValue(undefined);
+    sendCtaMessage = jest.fn().mockResolvedValue(undefined);
     downloadMedia = jest.fn().mockResolvedValue({
       buffer: Buffer.from('audio'),
       mimeType: 'audio/ogg',
     });
     markAsRead = jest.fn().mockResolvedValue(undefined);
     transcribe = jest.fn().mockResolvedValue('quiero facturar dos colas');
-    classify = jest
-      .fn()
-      .mockResolvedValue({ category: 'greeting', confidence: 1, method: 'rule' });
+    classify = jest.fn().mockResolvedValue({
+      category: 'greeting',
+      confidence: 1,
+      method: 'rule',
+    });
     getState = jest.fn().mockResolvedValue(createIdleRecord());
     extract = jest.fn().mockResolvedValue('{"products":[]}');
-    client = { sendTextMessage, downloadMedia, markAsRead };
+    getValidToken = jest.fn().mockResolvedValue('valid-token');
+    mintLoginCode = jest.fn().mockResolvedValue('login-code-1');
+    client = { sendTextMessage, sendCtaMessage, downloadMedia, markAsRead };
     sttClient = { transcribe };
     llmClient = { extract };
     classificationService = { classify } as unknown as ClassificationService;
     conversationStateService = {
       getState,
     } as unknown as ConversationStateService;
+    authService = { getValidToken } as unknown as AuthService;
+    webviewAuthService = { mintLoginCode } as unknown as WebviewAuthService;
+    config = {
+      getOrThrow: () => 'https://webview.test',
+    } as unknown as ConfigService;
     processor = new WhatsappInboundProcessor(
       client,
       sttClient,
       llmClient,
       classificationService,
       conversationStateService,
+      authService,
+      webviewAuthService,
+      config,
     );
+  });
+
+  describe('auth gate', () => {
+    it('sends the nudge reply and skips classification/STT/LLM when unauthenticated', async () => {
+      getValidToken.mockResolvedValue(null);
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.unauth',
+        type: InboundMessageType.TEXT,
+        text: 'quiero facturar dos colas',
+      });
+
+      await processor.process(job);
+
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('iniciar sesión'),
+      );
+      expect(classify).not.toHaveBeenCalled();
+      expect(extract).not.toHaveBeenCalled();
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not transcribe audio when unauthenticated', async () => {
+      getValidToken.mockResolvedValue(null);
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.unauth-audio',
+        type: InboundMessageType.AUDIO,
+        mediaId: 'media-1',
+      });
+
+      await processor.process(job);
+
+      expect(downloadMedia).not.toHaveBeenCalled();
+      expect(transcribe).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('iniciar sesión'),
+      );
+    });
+
+    it('mints a login code and sends a CTA when the message is "iniciar sesión"', async () => {
+      getValidToken.mockResolvedValue(null);
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.login',
+        type: InboundMessageType.TEXT,
+        text: 'Iniciar Sesión',
+      });
+
+      await processor.process(job);
+
+      expect(mintLoginCode).toHaveBeenCalledWith('5219999999999');
+      expect(sendCtaMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.any(String),
+        expect.any(String),
+        'https://webview.test/login?code=login-code-1',
+      );
+      expect(sendTextMessage).not.toHaveBeenCalled();
+    });
+
+    it('recognizes the login command without accents', async () => {
+      getValidToken.mockResolvedValue(null);
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.login-noaccent',
+        type: InboundMessageType.TEXT,
+        text: 'iniciar sesion',
+      });
+
+      await processor.process(job);
+
+      expect(sendCtaMessage).toHaveBeenCalled();
+    });
+
+    it('proceeds to the normal pipeline once authenticated', async () => {
+      getValidToken.mockResolvedValue('valid-token');
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.auth',
+        type: InboundMessageType.TEXT,
+        text: 'hola',
+      });
+
+      await processor.process(job);
+
+      expect(classify).toHaveBeenCalledWith('hola');
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('asistente de facturación'),
+      );
+    });
   });
 
   it('classifies text messages and replies with the matching hardcoded message', async () => {

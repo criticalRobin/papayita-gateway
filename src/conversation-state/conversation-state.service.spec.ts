@@ -14,10 +14,7 @@ describe('ConversationStateService', () => {
   it('returns a default idle record when no key exists', async () => {
     const redis = makeRedis();
     redis.get.mockResolvedValue(null);
-    const service = new ConversationStateService(
-      redis as never,
-      makeConfig(),
-    );
+    const service = new ConversationStateService(redis as never, makeConfig());
 
     const state = await service.getState('5219999999999');
 
@@ -29,10 +26,7 @@ describe('ConversationStateService', () => {
     const stored = { ...createIdleRecord(), state: 'awaiting_confirmation' };
     const redis = makeRedis();
     redis.get.mockResolvedValue(JSON.stringify(stored));
-    const service = new ConversationStateService(
-      redis as never,
-      makeConfig(),
-    );
+    const service = new ConversationStateService(redis as never, makeConfig());
 
     const state = await service.getState('5219999999999');
 
@@ -64,13 +58,9 @@ describe('ConversationStateService', () => {
   it('logs a state-transition line only when the state actually changes', async () => {
     const redis = makeRedis();
     redis.get.mockResolvedValue(null); // idle
-    const service = new ConversationStateService(
-      redis as never,
-      makeConfig(),
-    );
+    const service = new ConversationStateService(redis as never, makeConfig());
     const logSpy = jest.spyOn(
-      (service as unknown as { logger: { log: (msg: string) => void } })
-        .logger,
+      (service as unknown as { logger: { log: (msg: string) => void } }).logger,
       'log',
     );
 

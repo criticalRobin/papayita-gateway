@@ -12,6 +12,7 @@ src/
     webhook/            # inbound Meta Cloud API handling
     client/              # outbound WhatsApp sending: hardcoded replies, CTA messages
   webview-auth/           # magic-link exchange-code minting + /auth/exchange
+  auth/                    # per-phone login gate: iniciar sesión command, login CTA, login webview controller, phone -> CoreApiUserToken cache/refresh
   queue/
     processors/          # BullMQ processors, one per job type
   conversation-state/     # Redis-backed state machine
@@ -20,7 +21,7 @@ src/
   extraction/              # Gemini client + prompt templates + schema validation
   catalog/                 # catalog-search client (Core API), threshold logic
   draft-builder/           # deterministic invoice JSON assembly + webview-facing controller
-  core-api/                # typed Core API client, service auth (login/refresh) lifecycle
+  core-api/                # typed, stateless Core API client — takes a CoreApiUserToken per call, no cached singleton identity
   registration/            # onboarding orchestration + webview-facing controller
   config/                  # typed config module + validation schema
   common/                  # shared decorators, filters, interceptors, pipes — keep this small; if it's growing, it probably belongs in a real module
@@ -43,6 +44,7 @@ NestJS's module/DI system is deliberately modeled on Angular's — this isn't a 
 - `whatsapp/webhook` — Meta calls this
 - Core API's inbound webhook receiver — Core API calls this
 - `webview-auth` — the Next.js app calls `POST /auth/exchange` here
+- `auth` — the login webview posts email + password here
 - `draft-builder` — the Next.js app calls this to fetch a pending draft and to submit the confirmed/edited version
 - `registration` — the Next.js app calls this to submit emisor data
 
@@ -50,7 +52,7 @@ NestJS's module/DI system is deliberately modeled on Angular's — this isn't a 
 
 ## Dependency injection and testability
 
-Every module that calls an external API (`stt`, `extraction`, `catalog`, `core-api`, `whatsapp/client`) must be defined behind an interface, not just a concrete class, so it can be swapped for a test double without touching consumer code:
+Every module that calls an external API (`stt`, `extraction`, `catalog`, `core-api`, `whatsapp/client`) must be defined behind an interface, not just a concrete class, so it can be swapped for a test double without touching consumer code. `auth` follows the same rule for the pieces it depends on (`core-api` for login/refresh, `whatsapp/client` for the login CTA) — the phone→token cache itself doesn't need an interface, it's not swapped for a fake API, but its Redis access should still go through a small repository the service can mock in tests.
 
 ```ts
 // catalog/catalog-search.interface.ts
@@ -128,69 +130,43 @@ const module = await Test.createTestingModule({
 
 This isn't ceremony — `draft-builder` and the threshold logic need to be tested against known catalog responses (zero results, one below threshold, one above, multiple candidates) without hitting a real Core API. Given this branching now lives entirely in the gateway (the backend doesn't return an `estado` to guide it), this is exactly where a regression would silently change how many items get auto-selected vs. shown to the user.
 
-## Two JWTs — do not let them touch each other
+## Three credentials — do not let them touch each other
 
-This repo holds two structurally different credentials. Mixing them up is a real security bug, not just a style issue, so make the type system help prevent it — don't type both as a bare `string`:
+This repo holds three structurally different credentials. Mixing them up is a real security bug, not just a style issue, so make the type system help prevent it — don't type any of them as a bare `string`:
 
 ```ts
 // core-api/core-api-token.ts
-export type CoreApiServiceToken = string & { readonly __brand: 'CoreApiServiceToken' };
+export type CoreApiUserToken = string & { readonly __brand: 'CoreApiUserToken' };
 
 // webview-auth/webview-session-token.ts
 export type WebviewSessionToken = string & { readonly __brand: 'WebviewSessionToken' };
 ```
 
-This "branded type" trick costs nothing at runtime but makes it a compile error to accidentally pass a `WebviewSessionToken` somewhere a `CoreApiServiceToken` is expected, or vice versa.
+This "branded type" trick costs nothing at runtime but makes it a compile error to accidentally pass a `WebviewSessionToken` somewhere a `CoreApiUserToken` is expected, or vice versa — or one phone's `CoreApiUserToken` somewhere another phone's is expected, which is why `auth` always keys its cache and its methods by phone number, never passes a bare token around without it.
 
-**`CoreApiServiceToken`** — one fixed identity, this gateway's own service account. Lives entirely inside `core-api/`. Login and refresh, cached centrally so every other module just calls `core-api-client`'s methods without knowing how auth works underneath:
+**`CoreApiUserToken`** — **this changed from the original plan.** There is no longer one fixed gateway service identity. Each WhatsApp phone number logs into its own Core API account (email + password, via the `iniciar sesión` login webview — see `project-info.md`'s "Auth model"), and `auth` caches the resulting token per phone number in Redis. `core-api-client` itself is now stateless — it takes a token per call instead of owning one:
 
 ```ts
 // core-api/core-api-client.service.ts
 @Injectable()
 export class CoreApiClient {
-  private cachedToken: { accessToken: CoreApiServiceToken; refreshToken: string; expiresAt: Date } | null = null;
-
   constructor(private readonly http: HttpService, private readonly config: ConfigService) {}
 
-  private async getValidToken(): Promise<CoreApiServiceToken> {
-    if (this.cachedToken && this.cachedToken.expiresAt > new Date(Date.now() + 60_000)) {
-      return this.cachedToken.accessToken; // still valid, with a minute of buffer
-    }
-    if (this.cachedToken?.refreshToken) {
-      return this.refresh(this.cachedToken.refreshToken);
-    }
-    return this.login();
-  }
-
-  private async login(): Promise<CoreApiServiceToken> {
+  async login(email: string, password: string): Promise<{ accessToken: CoreApiUserToken; refreshToken: string; expiresAt: Date }> {
     const { data } = await firstValueFrom(
-      this.http.post(`${this.config.get('CORE_API_BASE_URL')}/auth/login`, {
-        email: this.config.get('CORE_API_SERVICE_EMAIL'),
-        password: this.config.get('CORE_API_SERVICE_PASSWORD'),
-      }),
+      this.http.post(`${this.config.get('CORE_API_BASE_URL')}/auth/login`, { email, password }),
     );
-    this.cachedToken = {
-      accessToken: data.accessToken,
-      refreshToken: data.refreshToken,
-      expiresAt: new Date(data.expiresAt),
-    };
-    return this.cachedToken.accessToken;
+    return { accessToken: data.accessToken, refreshToken: data.refreshToken, expiresAt: new Date(data.expiresAt) };
   }
 
-  private async refresh(refreshToken: string): Promise<CoreApiServiceToken> {
-    try {
-      const { data } = await firstValueFrom(
-        this.http.post(`${this.config.get('CORE_API_BASE_URL')}/auth/refresh`, { refreshToken }),
-      );
-      this.cachedToken = { accessToken: data.accessToken, refreshToken: data.refreshToken, expiresAt: new Date(data.expiresAt) };
-      return this.cachedToken.accessToken;
-    } catch {
-      return this.login(); // refresh token also expired — fall back to a fresh login
-    }
+  async refresh(refreshToken: string): Promise<{ accessToken: CoreApiUserToken; refreshToken: string; expiresAt: Date }> {
+    const { data } = await firstValueFrom(
+      this.http.post(`${this.config.get('CORE_API_BASE_URL')}/auth/refresh`, { refreshToken }),
+    );
+    return { accessToken: data.accessToken, refreshToken: data.refreshToken, expiresAt: new Date(data.expiresAt) };
   }
 
-  async post<T>(path: string, body: unknown): Promise<T> {
-    const token = await this.getValidToken();
+  async post<T>(path: string, token: CoreApiUserToken, body: unknown): Promise<T> {
     const { data } = await firstValueFrom(
       this.http.post<T>(`${this.config.get('CORE_API_BASE_URL')}${path}`, body, {
         headers: { Authorization: `Bearer ${token}` },
@@ -201,9 +177,41 @@ export class CoreApiClient {
 }
 ```
 
-Every module that needs the Core API (`catalog`, `draft-builder`'s submission step, `registration`) calls `CoreApiClient.post()`/`.get()` and never touches a token directly.
+**`auth`** owns the per-phone cache and refresh, and is what every other module (`catalog`, `draft-builder`'s submission step, `registration`) goes through to get a usable token — they never call `core-api-client`'s `login`/`refresh` directly:
 
-**`WebviewSessionToken`** — one specific user session, minted per CTA link, validated by `webview-auth`'s guard on the controllers that serve the Next.js app:
+```ts
+// auth/auth.service.ts
+@Injectable()
+export class AuthService {
+  constructor(private readonly coreApiClient: CoreApiClient, @InjectRedis() private readonly redis: Redis) {}
+
+  async getValidToken(phoneNumber: string): Promise<CoreApiUserToken | null> {
+    const cached = await this.redis.get(`auth:${phoneNumber}`);
+    if (!cached) return null; // not logged in — caller sends the "iniciar sesión" nudge
+    const { accessToken, refreshToken, expiresAt } = JSON.parse(cached);
+    if (new Date(expiresAt) > new Date(Date.now() + 60_000)) return accessToken;
+    try {
+      const refreshed = await this.coreApiClient.refresh(refreshToken);
+      await this.cache(phoneNumber, refreshed);
+      return refreshed.accessToken;
+    } catch {
+      await this.redis.del(`auth:${phoneNumber}`); // refresh token also expired — force re-login, no silent failure
+      return null;
+    }
+  }
+
+  async login(phoneNumber: string, email: string, password: string): Promise<void> {
+    const token = await this.coreApiClient.login(email, password);
+    await this.cache(phoneNumber, token);
+  }
+
+  private async cache(phoneNumber: string, token: { accessToken: CoreApiUserToken; refreshToken: string; expiresAt: Date }): Promise<void> {
+    await this.redis.set(`auth:${phoneNumber}`, JSON.stringify(token));
+  }
+}
+```
+
+**`WebviewSessionToken`** — one specific user session, minted per CTA link (draft/registration *or* login), validated by `webview-auth`'s guard on the controllers that serve the Next.js app:
 
 ```ts
 // webview-auth/webview-session.guard.ts
@@ -239,7 +247,7 @@ export class DraftBuilderController {
 }
 ```
 
-**The rule this exists to enforce:** nothing in `webview-auth` or any controller guarded by `WebviewSessionGuard` should ever construct a `CoreApiServiceToken`, and `CoreApiClient` should never accept or forward a `WebviewSessionToken`. If a future change seems to require crossing that boundary, that's a sign the design needs a second look, not a quick cast around the type system.
+**The rule this exists to enforce:** nothing in `webview-auth` or any controller guarded by `WebviewSessionGuard` should ever construct a `CoreApiUserToken`, and `CoreApiClient` should never accept or forward a `WebviewSessionToken`. Nor should `auth` ever return one phone number's `CoreApiUserToken` for a request scoped to a different phone number — always look it up keyed by the phone the request is actually for, never pass a token through without that key. If a future change seems to require crossing either of these boundaries, that's a sign the design needs a second look, not a quick cast around the type system.
 
 ## Pure core for `draft-builder` and `conversation-state`
 
@@ -357,8 +365,7 @@ export const envSchema = z.object({
   GEMINI_API_KEY: z.string().min(1),
   ASSEMBLYAI_API_KEY: z.string().min(1),
   CORE_API_BASE_URL: z.string().url(),
-  CORE_API_SERVICE_EMAIL: z.string().email(),
-  CORE_API_SERVICE_PASSWORD: z.string().min(1),
+  // no CORE_API_SERVICE_EMAIL/PASSWORD anymore — each phone logs in with its own Core API account, see auth/
   WEBVIEW_BASE_URL: z.string().url(),        // where the Next.js app is hosted, used to build CTA links
   WEBVIEW_SESSION_SECRET: z.string().min(1), // signs/verifies exchange codes and session JWTs
   CATALOG_MATCH_THRESHOLD: z.coerce.number().min(0).max(1).default(0.8), // placeholder — see open question in project-info.md
@@ -449,7 +456,7 @@ Enable global validation (`ValidationPipe({ whitelist: true, forbidNonWhiteliste
 - **Unit tests** for `draft-builder` (including the threshold logic), `classification`, and the state-machine transitions in `conversation-state` must not depend on any live external API — mock `catalog-client`, `extraction`, and `core-api` at their interfaces. These are the modules encoding the business rules from `project-info.md` — they need the tightest test coverage in the repo.
 - Write a test for every threshold-boundary case in the catalog resolution logic: empty array, one result just below the configured threshold, one result just above it, multiple results all above it — this branching directly determines what the webview shows the user, so a regression here is a UX and correctness regression, not just a bug.
 - Write a test confirming `ConfirmDraftDto` submissions are re-validated against catalog data server-side, not trusted as-is — this is a security-relevant test, not just a correctness one.
-- Write a test confirming `CoreApiClient` correctly falls back to a fresh login when the refresh token is also expired, not just when the access token expires.
+- Write a test confirming `AuthService.getValidToken` correctly clears the cached entry and returns `null` (forcing re-login) when the refresh token is also expired, not just when the access token expires.
 - Integration/e2e tests that do hit real BullMQ + Redis (via the Docker Compose setup) are fine and encouraged for the queue/worker wiring itself — that's specifically the part that can't be meaningfully mocked.
 
 ## Style
@@ -463,4 +470,4 @@ Enable global validation (`ValidationPipe({ whitelist: true, forbidNonWhiteliste
 
 - Branch naming: `feature/`, `fix/`, `chore/` prefixes.
 - Commit messages: short imperative summary line, body explains *why* when the change isn't self-evident from the diff — especially for anything touching the message-budget, auth, or state-machine logic, where the "why" isn't visible from the code alone.
-- Every PR touching `draft-builder`, `catalog`, `core-api`, or `webview-auth` should note in the description which cases were tested, given how directly those map to the product's cost, correctness, and security guarantees.
+- Every PR touching `draft-builder`, `catalog`, `core-api`, `webview-auth`, or `auth` should note in the description which cases were tested, given how directly those map to the product's cost, correctness, and security guarantees.

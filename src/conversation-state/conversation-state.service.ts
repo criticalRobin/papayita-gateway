@@ -61,6 +61,11 @@ export class ConversationStateService {
       updatedAt: new Date().toISOString(),
     };
     const ttl = this.config.get<number>('CONVERSATION_STATE_TTL_SECONDS', 900);
-    await this.redis.set(this.key(phoneNumber), JSON.stringify(stamped), 'EX', ttl);
+    await this.redis.set(
+      this.key(phoneNumber),
+      JSON.stringify(stamped),
+      'EX',
+      ttl,
+    );
   }
 }

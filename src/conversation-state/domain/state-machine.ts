@@ -1,8 +1,5 @@
 export type ConversationState =
-  | 'idle'
-  | 'awaiting_confirmation'
-  | 'submitting'
-  | 'escalated';
+  'idle' | 'awaiting_confirmation' | 'submitting' | 'escalated';
 
 export interface ConversationRecord {
   state: ConversationState;

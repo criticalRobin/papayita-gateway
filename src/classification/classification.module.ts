@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ClassificationService, EMBEDDING_PROVIDER } from './classification.service';
+import {
+  ClassificationService,
+  EMBEDDING_PROVIDER,
+} from './classification.service';
 import { TransformersEmbeddingProvider } from './transformers-embedding.provider';
 
 @Module({

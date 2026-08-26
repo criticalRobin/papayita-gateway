@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Redis } from 'ioredis';
-import { ConversationStateService, REDIS_CLIENT } from './conversation-state.service';
+import {
+  ConversationStateService,
+  REDIS_CLIENT,
+} from './conversation-state.service';
 
 @Module({
   imports: [ConfigModule],

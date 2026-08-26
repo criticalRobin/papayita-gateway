@@ -30,7 +30,15 @@ export const envSchema = z.object({
     .max(1)
     .default(0.45),
 
-  CONVERSATION_STATE_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+  CONVERSATION_STATE_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(900),
+
+  CORE_API_BASE_URL: z.string().url(),
+  WEBVIEW_BASE_URL: z.string().url(),
+  LOGIN_CODE_TTL_SECONDS: z.coerce.number().int().positive().default(900),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

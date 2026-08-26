@@ -50,6 +50,43 @@ export class WhatsappService implements WhatsappClient {
     }
   }
 
+  // Meta's interactive "cta_url" message — one message that both explains
+  // what's happening and opens the in-app browser, per project-info.md's
+  // "bundle, never drip-feed" rule.
+  async sendCtaMessage(
+    to: string,
+    bodyText: string,
+    buttonText: string,
+    url: string,
+  ): Promise<void> {
+    const endpoint = `${this.baseUrl}/${this.phoneNumberId}/messages`;
+
+    try {
+      await firstValueFrom(
+        this.httpService.post(
+          endpoint,
+          {
+            messaging_product: 'whatsapp',
+            to,
+            type: 'interactive',
+            interactive: {
+              type: 'cta_url',
+              body: { text: bodyText },
+              action: {
+                name: 'cta_url',
+                parameters: { display_text: buttonText, url },
+              },
+            },
+          },
+          { headers: { Authorization: `Bearer ${this.accessToken}` } },
+        ),
+      );
+      this.logger.log(`sent CTA message to ${maskTail(to)}`);
+    } catch (error) {
+      throw this.mapError(error, maskTail(to));
+    }
+  }
+
   async downloadMedia(mediaId: string): Promise<WhatsappMedia> {
     const authHeader = {
       headers: { Authorization: `Bearer ${this.accessToken}` },

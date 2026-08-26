@@ -6,6 +6,7 @@ import { validateEnv } from './config/env.validation';
 import { QueueModule } from './queue/queue.module';
 import { WhatsappClientModule } from './whatsapp/client/whatsapp.module';
 import { WebhookModule } from './whatsapp/webhook/webhook.module';
+import { ExtractionModule } from './extraction/extraction.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { WebhookModule } from './whatsapp/webhook/webhook.module';
     QueueModule,
     WhatsappClientModule,
     WebhookModule,
+    ExtractionModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -13,6 +13,8 @@ import {
   InboundMessageJobDto,
   InboundMessageType,
 } from '../dto/inbound-message-job.dto';
+import { EXTRACTION_CLIENT } from '../../extraction/extraction.module';
+import type { LlmClient } from '../../extraction/llm-client.interface';
 
 // Hardcoded, deterministic replies — no LLM call here (project-info.md constraint #5).
 const STT_FAILURE_REPLY =
@@ -23,8 +25,6 @@ const GREETING_REPLY =
   '¡Hola! Soy el asistente de facturación. Cuéntame qué necesitas facturar y te ayudo.';
 const INFO_REQUEST_REPLY =
   'Con este servicio puedes emitir tus facturas autorizadas por el SRI directamente por WhatsApp. Cuéntame los datos de la venta cuando quieras facturar.';
-const BILLING_ATTEMPT_ACK_REPLY =
-  'Recibimos tu solicitud de factura, estamos trabajando en procesarla.';
 const OUT_OF_CONTEXT_REPLY =
   'No pudimos entender tu mensaje. Si quieres emitir una factura, cuéntame los datos de la venta.';
 
@@ -36,6 +36,7 @@ export class WhatsappInboundProcessor extends WorkerHost {
   constructor(
     @Inject(WHATSAPP_CLIENT) private readonly whatsappClient: WhatsappClient,
     @Inject(STT_CLIENT) private readonly sttClient: SttClient,
+    @Inject(EXTRACTION_CLIENT) private readonly llmClient: LlmClient,
     private readonly classificationService: ClassificationService,
     private readonly conversationStateService: ConversationStateService,
   ) {
@@ -43,8 +44,9 @@ export class WhatsappInboundProcessor extends WorkerHost {
   }
 
   async process(job: Job<InboundMessageJobDto>): Promise<void> {
-    const { phoneNumber, type, text, mediaId } = job.data;
+    const { phoneNumber, type, text, mediaId, whatsappMessageId } = job.data;
     this.logger.log(`processing ${type} message, job ${job.id}`);
+    await this.whatsappClient.markAsRead(whatsappMessageId);
 
     const reply = await this.buildReply(
       phoneNumber,
@@ -93,11 +95,6 @@ export class WhatsappInboundProcessor extends WorkerHost {
   ): Promise<string> {
     const record = await this.conversationStateService.getState(phoneNumber);
     if (record.state !== 'idle') {
-      // TODO(extraction/draft-builder): once the confirmation flow exists,
-      // this branch should route to a reply-to-pending-confirmation/correction
-      // handler instead of falling back to a raw echo. Out of scope until
-      // extraction/draft-builder land — see conversation-state's
-      // state-machine and project-info.md's state diagram.
       return `Recibimos tu mensaje: "${text}"`;
     }
 
@@ -108,11 +105,7 @@ export class WhatsappInboundProcessor extends WorkerHost {
       case 'info_request':
         return INFO_REQUEST_REPLY;
       case 'billing_attempt':
-        // TODO(extraction): hook the extraction module here — send `text` for
-        // LLM field extraction, then transition conversation-state via
-        // conversationStateService.applyEvent(phoneNumber, { type: 'BILLING_ATTEMPT_PARSED', draft }).
-        // Not implemented yet — extraction/draft-builder don't exist. Ack only.
-        return BILLING_ATTEMPT_ACK_REPLY;
+        return this.llmClient.extract(text);
       case 'out_of_context':
         return OUT_OF_CONTEXT_REPLY;
     }

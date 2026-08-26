@@ -9,6 +9,7 @@ import { RetryableSttError, TerminalSttError } from '../../stt/stt.errors';
 import type { ClassificationService } from '../../classification/classification.service';
 import type { ConversationStateService } from '../../conversation-state/conversation-state.service';
 import { createIdleRecord } from '../../conversation-state/domain/state-machine';
+import type { LlmClient } from '../../extraction/llm-client.interface';
 import {
   InboundMessageJobDto,
   InboundMessageType,
@@ -25,8 +26,10 @@ describe('WhatsappInboundProcessor', () => {
   let transcribe: jest.Mock;
   let classify: jest.Mock;
   let getState: jest.Mock;
+  let extract: jest.Mock;
   let client: WhatsappClient;
   let sttClient: SttClient;
+  let llmClient: LlmClient;
   let classificationService: ClassificationService;
   let conversationStateService: ConversationStateService;
   let processor: WhatsappInboundProcessor;
@@ -42,8 +45,10 @@ describe('WhatsappInboundProcessor', () => {
       .fn()
       .mockResolvedValue({ category: 'greeting', confidence: 1, method: 'rule' });
     getState = jest.fn().mockResolvedValue(createIdleRecord());
+    extract = jest.fn().mockResolvedValue('{"products":[]}');
     client = { sendTextMessage, downloadMedia };
     sttClient = { transcribe };
+    llmClient = { extract };
     classificationService = { classify } as unknown as ClassificationService;
     conversationStateService = {
       getState,
@@ -51,6 +56,7 @@ describe('WhatsappInboundProcessor', () => {
     processor = new WhatsappInboundProcessor(
       client,
       sttClient,
+      llmClient,
       classificationService,
       conversationStateService,
     );
@@ -82,7 +88,6 @@ describe('WhatsappInboundProcessor', () => {
   it.each([
     ['greeting', 'asistente de facturación'],
     ['info_request', 'emitir tus facturas'],
-    ['billing_attempt', 'solicitud de factura'],
     ['out_of_context', 'entender tu mensaje'],
   ] as const)(
     'sends the reply matching the %s category',
@@ -103,6 +108,29 @@ describe('WhatsappInboundProcessor', () => {
       );
     },
   );
+
+  it('extracts fields via the LLM client and sends the result for billing attempts', async () => {
+    classify.mockResolvedValue({
+      category: 'billing_attempt',
+      confidence: 1,
+      method: 'rule',
+    });
+    extract.mockResolvedValue('{"products":[{"producto":"pan"}]}');
+    const job = makeJob({
+      phoneNumber: '5219999999999',
+      whatsappMessageId: 'wamid.billing',
+      type: InboundMessageType.TEXT,
+      text: '2 panes a 0.50',
+    });
+
+    await processor.process(job);
+
+    expect(extract).toHaveBeenCalledWith('2 panes a 0.50');
+    expect(sendTextMessage).toHaveBeenCalledWith(
+      '5219999999999',
+      '{"products":[{"producto":"pan"}]}',
+    );
+  });
 
   it('skips classification and echoes the message when mid-billing-flow', async () => {
     getState.mockResolvedValue({
@@ -189,15 +217,17 @@ describe('WhatsappInboundProcessor', () => {
         confidence: 0.9,
         method: 'embedding',
       });
+      extract.mockResolvedValue('{"products":[]}');
 
       await processor.process(audioJob());
 
       expect(downloadMedia).toHaveBeenCalledWith('media-1');
       expect(transcribe).toHaveBeenCalledWith(Buffer.from('audio'));
       expect(classify).toHaveBeenCalledWith('quiero facturar dos colas');
+      expect(extract).toHaveBeenCalledWith('quiero facturar dos colas');
       expect(sendTextMessage).toHaveBeenCalledWith(
         '5219999999999',
-        expect.stringContaining('solicitud de factura'),
+        '{"products":[]}',
       );
     });
 

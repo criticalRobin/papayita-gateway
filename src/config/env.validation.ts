@@ -19,6 +19,8 @@ export const envSchema = z.object({
   META_APP_SECRET: z.string().min(1).optional(),
 
   ASSEMBLYAI_API_KEY: z.string().min(1),
+  GEMINI_API_KEY: z.string().min(1),
+  LLM_MODEL: z.string().min(1),
 
   // Not required — code defaults to './.cache/transformers' if unset.
   TRANSFORMERS_CACHE_DIR: z.string().min(1).optional(),

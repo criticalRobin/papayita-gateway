@@ -6,6 +6,7 @@ import { SttModule } from '../stt/stt.module';
 import { ClassificationModule } from '../classification/classification.module';
 import { ConversationStateModule } from '../conversation-state/conversation-state.module';
 import { WhatsappInboundProcessor } from './processors/whatsapp-inbound.processor';
+import { ExtractionModule } from '../extraction/extraction.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { WhatsappInboundProcessor } from './processors/whatsapp-inbound.processo
     SttModule,
     ClassificationModule,
     ConversationStateModule,
+    ExtractionModule,
   ],
   providers: [WhatsappInboundProcessor],
   exports: [BullModule],

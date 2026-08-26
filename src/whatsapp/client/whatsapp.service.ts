@@ -13,17 +13,23 @@ import {
 @Injectable()
 export class WhatsappService implements WhatsappClient {
   private readonly logger = new Logger(WhatsappService.name);
+  private readonly baseUrl: string;
+  private readonly accessToken: string;
+  private readonly phoneNumberId: string;
 
   constructor(
     private readonly httpService: HttpService,
     private readonly config: ConfigService,
-  ) {}
+  ) {
+    const graphApiVersion = this.config.get<string>('GRAPH_API_VERSION');
+    this.accessToken = this.config.get<string>('WHATSAPP_ACCESS_TOKEN') || '';
+    this.phoneNumberId =
+      this.config.get<string>('WHATSAPP_PHONE_NUMBER_ID') || '';
+    this.baseUrl = `https://graph.facebook.com/${graphApiVersion}`;
+  }
 
   async sendTextMessage(to: string, body: string): Promise<void> {
-    const phoneNumberId = this.config.get<string>('WHATSAPP_PHONE_NUMBER_ID');
-    const accessToken = this.config.get<string>('WHATSAPP_ACCESS_TOKEN');
-    const graphApiVersion = this.config.get<string>('GRAPH_API_VERSION');
-    const url = `https://graph.facebook.com/${graphApiVersion}/${phoneNumberId}/messages`;
+    const url = `${this.baseUrl}/${this.phoneNumberId}/messages`;
 
     try {
       await firstValueFrom(
@@ -35,7 +41,7 @@ export class WhatsappService implements WhatsappClient {
             type: 'text',
             text: { body },
           },
-          { headers: { Authorization: `Bearer ${accessToken}` } },
+          { headers: { Authorization: `Bearer ${this.accessToken}` } },
         ),
       );
       this.logger.log(`sent message to ${maskTail(to)}`);
@@ -45,15 +51,15 @@ export class WhatsappService implements WhatsappClient {
   }
 
   async downloadMedia(mediaId: string): Promise<WhatsappMedia> {
-    const accessToken = this.config.get<string>('WHATSAPP_ACCESS_TOKEN');
-    const graphApiVersion = this.config.get<string>('GRAPH_API_VERSION');
-    const authHeader = { headers: { Authorization: `Bearer ${accessToken}` } };
+    const authHeader = {
+      headers: { Authorization: `Bearer ${this.accessToken}` },
+    };
     const context = maskTail(mediaId);
 
     try {
       const metaResponse = await firstValueFrom(
         this.httpService.get<{ url: string; mime_type: string }>(
-          `https://graph.facebook.com/${graphApiVersion}/${mediaId}`,
+          `${this.baseUrl}/${mediaId}`,
           authHeader,
         ),
       );
@@ -72,6 +78,28 @@ export class WhatsappService implements WhatsappClient {
       };
     } catch (error) {
       throw this.mapError(error, context);
+    }
+  }
+
+  async markAsRead(messageId: string): Promise<void> {
+    const url = `${this.baseUrl}/${this.phoneNumberId}/messages`;
+
+    try {
+      await firstValueFrom(
+        this.httpService.post(
+          url,
+          {
+            messaging_product: 'whatsapp',
+            status: 'read',
+            message_id: messageId,
+            typing_indicator: { type: 'text' },
+          },
+          { headers: { Authorization: `Bearer ${this.accessToken}` } },
+        ),
+      );
+      this.logger.log(`marked message ${maskTail(messageId)} as read`);
+    } catch (error) {
+      throw this.mapError(error, maskTail(messageId));
     }
   }
 

@@ -23,6 +23,7 @@ function makeJob(data: InboundMessageJobDto): Job<InboundMessageJobDto> {
 describe('WhatsappInboundProcessor', () => {
   let sendTextMessage: jest.Mock;
   let downloadMedia: jest.Mock;
+  let markAsRead: jest.Mock;
   let transcribe: jest.Mock;
   let classify: jest.Mock;
   let getState: jest.Mock;
@@ -40,13 +41,14 @@ describe('WhatsappInboundProcessor', () => {
       buffer: Buffer.from('audio'),
       mimeType: 'audio/ogg',
     });
+    markAsRead = jest.fn().mockResolvedValue(undefined);
     transcribe = jest.fn().mockResolvedValue('quiero facturar dos colas');
     classify = jest
       .fn()
       .mockResolvedValue({ category: 'greeting', confidence: 1, method: 'rule' });
     getState = jest.fn().mockResolvedValue(createIdleRecord());
     extract = jest.fn().mockResolvedValue('{"products":[]}');
-    client = { sendTextMessage, downloadMedia };
+    client = { sendTextMessage, downloadMedia, markAsRead };
     sttClient = { transcribe };
     llmClient = { extract };
     classificationService = { classify } as unknown as ClassificationService;
@@ -130,6 +132,19 @@ describe('WhatsappInboundProcessor', () => {
       '5219999999999',
       '{"products":[{"producto":"pan"}]}',
     );
+  });
+
+  it('marks the inbound message as read before building a reply', async () => {
+    const job = makeJob({
+      phoneNumber: '5219999999999',
+      whatsappMessageId: 'wamid.read',
+      type: InboundMessageType.TEXT,
+      text: 'hola',
+    });
+
+    await processor.process(job);
+
+    expect(markAsRead).toHaveBeenCalledWith('wamid.read');
   });
 
   it('skips classification and echoes the message when mid-billing-flow', async () => {

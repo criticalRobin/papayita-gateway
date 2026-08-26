@@ -44,8 +44,9 @@ export class WhatsappInboundProcessor extends WorkerHost {
   }
 
   async process(job: Job<InboundMessageJobDto>): Promise<void> {
-    const { phoneNumber, type, text, mediaId } = job.data;
+    const { phoneNumber, type, text, mediaId, whatsappMessageId } = job.data;
     this.logger.log(`processing ${type} message, job ${job.id}`);
+    await this.whatsappClient.markAsRead(whatsappMessageId);
 
     const reply = await this.buildReply(
       phoneNumber,

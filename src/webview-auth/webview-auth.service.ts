@@ -37,4 +37,8 @@ export class WebviewAuthService {
   private key(code: string): string {
     return `webview-login:${code}`;
   }
+
+  async peekPhoneForCode(code: string): Promise<string | null> {
+    return this.redis.get(this.key(code));
+  }
 }

@@ -2,9 +2,12 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Post,
+  Query,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -52,5 +55,12 @@ export class AuthController {
       }
       throw error;
     }
+  }
+
+  @Get('login-webview/phone')
+  async getPhoneForLoginCode(@Query('code') code: string) {
+    const phoneNumber = await this.webviewAuthService.peekPhoneForCode(code);
+    if (!phoneNumber) throw new NotFoundException();
+    return { phoneNumber };
   }
 }

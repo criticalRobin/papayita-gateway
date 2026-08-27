@@ -1,4 +1,9 @@
-import { applyRules, matchGreeting, matchTrivialNoise, normalize } from './rules';
+import {
+  applyRules,
+  matchGreeting,
+  matchTrivialNoise,
+  normalize,
+} from './rules';
 
 describe('normalize', () => {
   it('lowercases, strips accents and punctuation, collapses whitespace', () => {
@@ -16,9 +21,9 @@ describe('matchGreeting', () => {
   );
 
   it('does not match a greeting prefix attached to real content', () => {
-    expect(
-      matchGreeting(normalize('hola quiero facturar dos colas')),
-    ).toBe(false);
+    expect(matchGreeting(normalize('hola quiero facturar dos colas'))).toBe(
+      false,
+    );
   });
 
   it('does not match unrelated text', () => {

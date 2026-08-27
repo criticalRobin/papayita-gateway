@@ -7,6 +7,8 @@ import { ClassificationModule } from '../classification/classification.module';
 import { ConversationStateModule } from '../conversation-state/conversation-state.module';
 import { WhatsappInboundProcessor } from './processors/whatsapp-inbound.processor';
 import { ExtractionModule } from '../extraction/extraction.module';
+import { AuthModule } from '../auth/auth.module';
+import { WebviewAuthModule } from '../webview-auth/webview-auth.module';
 
 @Module({
   imports: [
@@ -32,6 +34,8 @@ import { ExtractionModule } from '../extraction/extraction.module';
     ClassificationModule,
     ConversationStateModule,
     ExtractionModule,
+    AuthModule,
+    WebviewAuthModule,
   ],
   providers: [WhatsappInboundProcessor],
   exports: [BullModule],

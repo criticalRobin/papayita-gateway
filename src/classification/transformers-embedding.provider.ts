@@ -27,7 +27,8 @@ export class TransformersEmbeddingProvider implements EmbeddingProvider {
   private async loadPipeline(): Promise<FeatureExtractionPipeline> {
     const { pipeline, env } = await import('@xenova/transformers');
     env.allowRemoteModels = process.env.NODE_ENV !== 'production';
-    env.cacheDir = process.env.TRANSFORMERS_CACHE_DIR ?? './.cache/transformers';
+    env.cacheDir =
+      process.env.TRANSFORMERS_CACHE_DIR ?? './.cache/transformers';
     return pipeline('feature-extraction', MODEL_NAME);
   }
 }

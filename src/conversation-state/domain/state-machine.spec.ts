@@ -1,6 +1,12 @@
-import { ConversationRecord, createIdleRecord, transition } from './state-machine';
+import {
+  ConversationRecord,
+  createIdleRecord,
+  transition,
+} from './state-machine';
 
-function record(overrides: Partial<ConversationRecord> = {}): ConversationRecord {
+function record(
+  overrides: Partial<ConversationRecord> = {},
+): ConversationRecord {
   return { ...createIdleRecord(), ...overrides };
 }
 

@@ -50,7 +50,11 @@ export class ClassificationService {
       this.logger.error(
         `classification embedding step failed, falling back: ${(error as Error).message}`,
       );
-      return { category: 'out_of_context', confidence: 0, method: 'low_confidence_fallback' };
+      return {
+        category: 'out_of_context',
+        confidence: 0,
+        method: 'low_confidence_fallback',
+      };
     }
   }
 

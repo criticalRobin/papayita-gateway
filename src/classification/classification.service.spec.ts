@@ -19,7 +19,9 @@ function axisForPhrase(phrase: string): number[] {
 }
 
 function makeConfig(threshold = 0.45): ConfigService {
-  return { get: jest.fn().mockReturnValue(threshold) } as unknown as ConfigService;
+  return {
+    get: jest.fn().mockReturnValue(threshold),
+  } as unknown as ConfigService;
 }
 
 describe('ClassificationService', () => {
@@ -30,7 +32,11 @@ describe('ClassificationService', () => {
 
     const result = await service.classify('hola');
 
-    expect(result).toEqual({ category: 'greeting', confidence: 1, method: 'rule' });
+    expect(result).toEqual({
+      category: 'greeting',
+      confidence: 1,
+      method: 'rule',
+    });
     expect(embed).not.toHaveBeenCalled();
   });
 
@@ -57,7 +63,9 @@ describe('ClassificationService', () => {
   it('falls back to out_of_context when embedding confidence is below threshold', async () => {
     const embed = jest.fn((text: string) =>
       Promise.resolve(
-        text === 'mensaje ambiguo sin relacion' ? [0, 0, 0] : axisForPhrase(text),
+        text === 'mensaje ambiguo sin relacion'
+          ? [0, 0, 0]
+          : axisForPhrase(text),
       ),
     );
     const provider: EmbeddingProvider = { embed };

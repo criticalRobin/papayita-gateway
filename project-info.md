@@ -24,7 +24,7 @@ These came out of real cost analysis, not preference. Do not violate them withou
 6. **The invoice JSON is assembled in code, never generated whole by an LLM.** See "What the LLM owns vs. what code owns" below. This is a correctness rule as much as a cost rule — an LLM regenerating a legal tax document is a real risk, not just inefficient.
 7. **Never store `.p12` certificates or their passwords long-term in this repo's storage.** They're forwarded to the Core API's secure storage during registration. This gateway is a pass-through for that credential, not a custodian of it.
 8. **Registration stays reachable from WhatsApp** — a CTA button opens the Next.js webview for structured emisor data; the `.p12` certificate is sent separately as a plain WhatsApp document attachment (not through the webview — keeps certificate handling on the one path already designed for it). Never require the end customer to visit a website through any channel other than the in-app browser opened from a message Papayita sent.
-9. **Two separate JWTs exist in this system and must never be substituted for each other:** a **service JWT** (this gateway authenticating to the Core API, one fixed identity) and a **session JWT** (a specific webview session authenticating to this gateway, one specific user/draft). The end user's session JWT must never be forwarded to the Core API. See "Auth model" below.
+9. **Three separate JWT-shaped credentials exist in this system and must never be substituted for each other:** a **user JWT** (one specific WhatsApp phone number's own Core API account, minted via the real `/auth/login`, used for that phone's Core API calls), a **session JWT** (a specific webview session authenticating to this gateway, one specific draft/registration action, ~15 min), and an **exchange code** (opaque, single-use, embedded in a CTA link, traded for a session JWT). The end user's session JWT must never be forwarded to the Core API, and a phone's user JWT must never leak to another phone's session. See "Auth model" below.
 
 ## Architecture
 
@@ -50,13 +50,20 @@ Internals of this repo:
 | `catalog-client` | Calls the Core API's real product search endpoint, one call per item (fans out in parallel for multi-item sales), and applies the gateway-owned confidence threshold. See "Catalog search" below. |
 | `draft-builder` | **Pure decision logic, no LLM.** Assembles the invoice JSON skeleton and merges catalog-resolved items. Also owns the controller the Next.js webview calls to fetch and submit a draft (see "Auth model"). |
 | `webview-auth` | Mints short-lived, single-use, signed exchange codes for CTA links; exposes `POST /auth/exchange` to trade a code for a session JWT scoped to one phone number + draft/action. |
-| `core-api-client` | Typed client for the Core API. Owns the **service** login/refresh token lifecycle (see "Auth model") — every other module goes through this client rather than handling Core API auth itself. |
+| `auth` | Owns the per-phone-number login gate: checks whether a phone already has a stored, valid Core API user JWT before any billing/registration flow runs; detects the `iniciar sesión` command from an unauthenticated phone and sends the login CTA; exposes the controller the login webview posts credentials to; calls `core-api-client`'s login/refresh on the user's behalf and caches the resulting `CoreApiUserToken` per phone number in Redis (see "Auth model"). |
+| `core-api-client` | Typed, stateless HTTP client for the Core API. Takes a `CoreApiUserToken` per call — it no longer caches or owns a single fixed identity, since every call now goes out as a specific phone number's own Core API account, managed by `auth`. |
 | `webhook-receiver` (inbound from Core API) | HMAC-verifies `comprobante.autorizado` (or rejection), resolves phone number via `correlation_id`, triggers delivery of the result message. |
 | `registration` | Sends the CTA for the registration webview, exposes the controller the webview calls to submit emisor data, and separately ingests the `.p12` as a plain WhatsApp document attachment. |
 
 ## Conversation flow
 
-Every inbound WhatsApp message is classified first (cheap, internal, no cost):
+**Auth gate runs before classification, on every inbound message.** `auth` checks Redis for a stored, valid `CoreApiUserToken` for the sending phone number:
+
+- **No stored token, message is not the `iniciar sesión` command** → one hardcoded reply telling the user to send `iniciar sesión` to link their account (no LLM). Terminal, 1 message.
+- **No stored token, message is `iniciar sesión`** → `auth` mints a login exchange code (via `webview-auth`) and sends **one CTA message** opening the login webview in the in-app browser. The webview collects email + password and posts them to `auth`'s controller, which calls the Core API's real `/auth/login` and, on success, caches the returned `CoreApiUserToken` (+ refresh token, expiry) against that phone number. **This costs exactly 1 WhatsApp message** — unlike the billing flow, there's no async Core API step afterward, so the webview shows login success/failure directly; no second WhatsApp message is sent.
+- **Valid stored token** → message proceeds to classification below, unchanged.
+
+Once past the auth gate, every inbound WhatsApp message is classified (cheap, internal, no cost):
 
 - **Greeting / unclear** → one hardcoded reply (no LLM). Conversation returns to idle. Terminal, 1 message.
 - **Billing attempt** (complete or not — completeness is no longer decided at this stage) → STT if audio, then LLM extraction, then catalog resolution for each item (see "Catalog search"), then `draft-builder` assembles a draft — whatever is missing, ambiguous, or mismatched is simply part of what the webview shows and lets the user fix, not something decided or asked about over chat. The gateway stores the draft in `conversation-state` under a `correlation_id`, mints a scoped exchange code via `webview-auth`, and sends **one CTA message** linking to the confirmation webview.
@@ -80,6 +87,8 @@ submitting → (webhook success/failure) → idle
 ```
 
 Registration has its own states (`awaiting_flow`, `awaiting_certificate`) using the same shape — webview submission replaces what would have been a chat-based flow.
+
+**Auth status is a separate store from this state machine**, owned by `auth`, key `auth:{phone_number}`, holding `{ accessToken, refreshToken, expiresAt }` — not part of `conversation-state`'s ~15 min TTL hash. It doesn't participate in the `idle`/`awaiting_webview_action`/`submitting` transitions above; it's checked once per message, ahead of everything else (see "Conversation flow").
 
 ## What the LLM owns vs. what code owns
 
@@ -152,15 +161,15 @@ Response (plain array, no `{status, message, result}` envelope):
 
 ## Auth model
 
-Two distinct JWTs. Do not confuse them or let one substitute for the other.
+Three distinct credentials. Do not confuse them or let one substitute for another.
 
-| | Service JWT (Gateway → Core API) | Session JWT (Next.js webview → Gateway) |
-|---|---|---|
-| Represents | The gateway itself — one fixed service identity | One specific user/conversation/draft |
-| Minted by | Core API's `/auth/login` (email + password), refreshed via its `refreshToken` | This gateway's `webview-auth` module, via `/auth/exchange` |
-| Used for | Every Core API call: catalog search, document creation, emisor/certificate endpoints | Every gateway call from the webview: fetch draft, submit confirmed draft, submit registration data |
-| Lifespan | Long-lived credential (Core API's example: 24h access token, ~7-day refresh token), cached and refreshed centrally in `core-api-client` | Short-lived, minted per CTA link, tied to one `correlation_id`, matches the ~15 min conversation TTL, single-use |
-| Never | Forwarded to the webview or logged | Forwarded to the Core API |
+| | User JWT (Gateway → Core API, per phone number) | Session JWT (Next.js webview → Gateway) | Exchange code (CTA link → session/login) |
+|---|---|---|---|
+| Represents | One specific WhatsApp phone number's own Core API account | One specific user/conversation/draft or registration session | A one-time ticket for a CTA link — not itself a bearer token |
+| Minted by | Core API's `/auth/login` (email + password entered in the login webview), refreshed via its `refreshToken` | This gateway's `webview-auth` module, via `/auth/exchange` | This gateway's `webview-auth` module |
+| Used for | Every Core API call made on that phone's behalf: catalog search, document creation, emisor/certificate endpoints | Every gateway call from the webview: fetch draft, submit confirmed draft, submit registration data, submit login credentials | Embedded in the CTA URL; traded once for a session JWT (or, for the login CTA, used to identify which phone number the submitted credentials should attach to) |
+| Lifespan | Long-lived (Core API's example: 24h access token, ~7-day refresh token), cached per phone number in Redis (`auth:{phone_number}`) and refreshed by `auth` — **not** cached centrally as one shared identity anymore | Short-lived, minted per CTA link, tied to one `correlation_id` or login attempt, matches the ~15 min conversation TTL, single-use | Single-use, expires unused same as the session JWT it unlocks |
+| Never | Forwarded to the webview or logged; one phone's token must never be used for another phone's call | Forwarded to the Core API | Used more than once, or treated as a bearer token itself |
 
 **Core API login (the real, specified endpoint):**
 
@@ -168,9 +177,15 @@ Two distinct JWTs. Do not confuse them or let one substitute for the other.
 ```json
 { "email": "admin@empresa.com", "password": "password123" }
 ```
-Response includes `accessToken`, `refreshToken`, `expiresIn`, `expiresAt`, and a `user` object with a `rol` field. The example response shows `SUPERADMIN` — **worth confirming with the Core API team whether a narrower-scoped role exists for a service account.** A gateway service account only ever needs access to its own tenant's emisores; defaulting to the broadest available role is worth pushing back on rather than accepting because it's what the example returned.
+Response includes `accessToken`, `refreshToken`, `expiresIn`, `expiresAt`, and a `user` object with a `rol` field.
 
-**Magic-link session flow (gateway's own mechanism, not Core API's):** the gateway mints a short, signed, single-use code scoped to a phone number + specific draft/action, embeds only that opaque code in the CTA URL (never a real bearer token, to avoid it being logged or cached in browser history), and the webview's first action on load is exchanging it for a session JWT via `POST /auth/exchange`. That exchange should also return the draft data in the same call — the gateway already knows which draft the code unlocks, no reason to make the client ask separately.
+**This used to be planned as a single fixed gateway service account (`SUPERADMIN` or narrower) shared across all calls. That plan is superseded:** each WhatsApp phone number now authenticates with its own Core API email/password via the `iniciar sesión` command and a login webview (see "Conversation flow"), and the resulting `CoreApiUserToken` is what the gateway uses for that phone's subsequent Core API calls. `core-api-client` no longer owns a cached singleton token — it's a stateless client taking a `CoreApiUserToken` per call; `auth` owns the per-phone cache and refresh lifecycle.
+
+**Open question this raises, don't guess:** whether the gateway still needs any fixed, phone-independent credential for calls that aren't on behalf of a specific authenticated user (none identified yet — flag if one comes up rather than quietly reintroducing a shared token).
+
+**Magic-link session flow (gateway's own mechanism, not Core API's) — now used for two purposes, draft/registration sessions and login:** the gateway mints a short, signed, single-use code, embeds only that opaque code in the CTA URL (never a real bearer token, to avoid it being logged or cached in browser history), and the webview's first action on load is exchanging it via `POST /auth/exchange`.
+- For a **draft/registration CTA**, the code is scoped to a phone number + `correlation_id`; the exchange returns a session JWT and the draft data in the same call.
+- For a **login CTA**, the code is scoped to just the phone number; the login webview's form (email + password) posts straight to `auth`'s controller (not through `/auth/exchange` — there's no draft to fetch, and the credentials themselves are the payload, not a code trade). `auth` validates the code identifies a real pending login attempt for that phone, calls Core API `/auth/login`, and stores the resulting `CoreApiUserToken` against that phone number.
 
 ## Tech stack (locked in — don't substitute without discussion)
 
@@ -195,6 +210,10 @@ Response includes `accessToken`, `refreshToken`, `expiresIn`, `expiresAt`, and a
 - Fallback UX for zero catalog candidates (`sin_coincidencia`-equivalent: empty array) — not yet decided
 - Price-mismatch tolerance threshold, and whether an over-total is treated differently from an under-total
 - Self-service endpoint to create an `emisor` + attach a certificate, or admin-only today?
+- Whether the gateway still needs any fixed, phone-independent Core API credential now that every call goes out as a specific authenticated phone's own user JWT — none identified yet
+- What happens when a phone's `refreshToken` itself expires (not just the access token) — re-prompt `iniciar sesión` from scratch, presumably, but confirm there's no silent-failure path
+- Logout / re-auth / switch-account UX — not yet designed; is there ever a need for a phone to detach from one Core API account and log into another?
+- Whether one Core API account (email/password) can legitimately be linked to more than one WhatsApp phone number, or is expected to be 1:1
 
 ## Related documents in this project
 

@@ -1,5 +1,6 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Job } from 'bullmq';
 import { WHATSAPP_CLIENT } from '../../whatsapp/client/whatsapp.module';
 import type { WhatsappClient } from '../../whatsapp/client/whatsapp-client.interface';
@@ -9,6 +10,8 @@ import type { SttClient } from '../../stt/stt-client.interface';
 import { TerminalSttError } from '../../stt/stt.errors';
 import { ClassificationService } from '../../classification/classification.service';
 import { ConversationStateService } from '../../conversation-state/conversation-state.service';
+import { AuthService } from '../../auth/auth.service';
+import { WebviewAuthService } from '../../webview-auth/webview-auth.service';
 import {
   InboundMessageJobDto,
   InboundMessageType,
@@ -27,6 +30,22 @@ const INFO_REQUEST_REPLY =
   'Con este servicio puedes emitir tus facturas autorizadas por el SRI directamente por WhatsApp. Cuéntame los datos de la venta cuando quieras facturar.';
 const OUT_OF_CONTEXT_REPLY =
   'No pudimos entender tu mensaje. Si quieres emitir una factura, cuéntame los datos de la venta.';
+const NOT_AUTHENTICATED_REPLY =
+  'Para emitir facturas primero debes vincular tu cuenta. Escribe "iniciar sesión" para continuar.';
+const LOGIN_CTA_BODY = 'Vincula tu cuenta para emitir facturas por WhatsApp.';
+const LOGIN_CTA_BUTTON = 'Iniciar sesión';
+
+// Accent-insensitive: typing "sesion" without the tilde on a phone keyboard
+// is common. "login" is accepted as a plain-English fallback.
+function isLoginCommand(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // strip combining diacritics (e.g. "sesión" -> "sesion")
+    .trim()
+    .toLowerCase();
+  return normalized === 'iniciar sesion' || normalized === 'login';
+}
 
 // concurrency: 1 — global ordering guarantee, see project-info.md / CLAUDE.md. Don't change without understanding why.
 @Processor('whatsapp-messages', { concurrency: 1 })
@@ -39,6 +58,9 @@ export class WhatsappInboundProcessor extends WorkerHost {
     @Inject(EXTRACTION_CLIENT) private readonly llmClient: LlmClient,
     private readonly classificationService: ClassificationService,
     private readonly conversationStateService: ConversationStateService,
+    private readonly authService: AuthService,
+    private readonly webviewAuthService: WebviewAuthService,
+    private readonly config: ConfigService,
   ) {
     super();
   }
@@ -48,6 +70,15 @@ export class WhatsappInboundProcessor extends WorkerHost {
     this.logger.log(`processing ${type} message, job ${job.id}`);
     await this.whatsappClient.markAsRead(whatsappMessageId);
 
+    // Auth gate runs before anything else — no STT/classification/LLM cost is
+    // spent while the phone isn't authenticated. See project-info.md's
+    // "Conversation flow" / "Auth model".
+    const token = await this.authService.getValidToken(phoneNumber);
+    if (!token) {
+      await this.handleUnauthenticated(phoneNumber, type, text, job.id);
+      return;
+    }
+
     const reply = await this.buildReply(
       phoneNumber,
       type,
@@ -56,13 +87,47 @@ export class WhatsappInboundProcessor extends WorkerHost {
       job.id,
     );
 
+    await this.sendOrLogTerminal(job.id, () =>
+      this.whatsappClient.sendTextMessage(phoneNumber, reply),
+    );
+  }
+
+  private async handleUnauthenticated(
+    phoneNumber: string,
+    type: InboundMessageType,
+    text: string | undefined,
+    jobId: string | number | undefined,
+  ): Promise<void> {
+    if (type === InboundMessageType.TEXT && isLoginCommand(text)) {
+      const code = await this.webviewAuthService.mintLoginCode(phoneNumber);
+      const webviewBaseUrl = this.config.getOrThrow<string>('WEBVIEW_BASE_URL');
+      await this.sendOrLogTerminal(jobId, () =>
+        this.whatsappClient.sendCtaMessage(
+          phoneNumber,
+          LOGIN_CTA_BODY,
+          LOGIN_CTA_BUTTON,
+          `${webviewBaseUrl}/login?code=${code}`,
+        ),
+      );
+      return;
+    }
+
+    await this.sendOrLogTerminal(jobId, () =>
+      this.whatsappClient.sendTextMessage(phoneNumber, NOT_AUTHENTICATED_REPLY),
+    );
+  }
+
+  private async sendOrLogTerminal(
+    jobId: string | number | undefined,
+    send: () => Promise<void>,
+  ): Promise<void> {
     try {
-      await this.whatsappClient.sendTextMessage(phoneNumber, reply);
+      await send();
     } catch (error) {
       if (error instanceof TerminalWhatsappError) {
         // Retrying won't help (bad token, invalid recipient) — log and let the job complete rather than retry forever.
         this.logger.error(
-          `terminal failure on job ${job.id}: ${error.message}`,
+          `terminal send failure on job ${jobId}: ${error.message}`,
         );
         return;
       }

@@ -42,7 +42,8 @@ describe('LlmService', () => {
     });
 
     it('returns the output_text from the LLM response', async () => {
-      const raw = '{"products":[{"producto":"pan","precioUnitario":"0.5","cantidad":"2"}]}';
+      const raw =
+        '{"products":[{"producto":"pan","precioUnitario":"0.5","cantidad":"2"}]}';
       createMock.mockResolvedValue({ output_text: raw });
 
       const result = await service.extract('2 panes a 0.50');
@@ -53,20 +54,26 @@ describe('LlmService', () => {
     it('throws a generic error and logs when the client call rejects', async () => {
       createMock.mockRejectedValue(new Error('network blip'));
 
-      await expect(service.extract('texto')).rejects.toThrow('Error al extraer información');
+      await expect(service.extract('texto')).rejects.toThrow(
+        'Error al extraer información',
+      );
       expect(Logger.prototype.error).toHaveBeenCalled();
     });
 
     it('throws when the response has no output_text', async () => {
       createMock.mockResolvedValue({ output_text: undefined });
 
-      await expect(service.extract('texto')).rejects.toThrow('No response from LLM');
+      await expect(service.extract('texto')).rejects.toThrow(
+        'No response from LLM',
+      );
     });
 
     it('throws when the response has an empty string output_text', async () => {
       createMock.mockResolvedValue({ output_text: '' });
 
-      await expect(service.extract('texto')).rejects.toThrow('No response from LLM');
+      await expect(service.extract('texto')).rejects.toThrow(
+        'No response from LLM',
+      );
     });
   });
 });

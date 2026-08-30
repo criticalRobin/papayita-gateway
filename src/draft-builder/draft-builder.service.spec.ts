@@ -7,6 +7,7 @@ import type { AuthService } from '../auth/auth.service';
 import type { ConversationStateService } from '../conversation-state/conversation-state.service';
 import type { ConfigService } from '@nestjs/config';
 import { DraftBuilderService } from './draft-builder.service';
+import { FormaPago } from './domain/types';
 
 // Loose mock shapes (not Partial<RealService>) — referencing a real class's
 // method as a value (even inside Partial<>) trips
@@ -362,7 +363,7 @@ describe('DraftBuilderService', () => {
               cantidad: 1,
             },
           ],
-          formaPago: '01',
+          formaPago: FormaPago.EFECTIVO,
         },
       );
 

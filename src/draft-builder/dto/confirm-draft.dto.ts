@@ -1,11 +1,13 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
+  IsEnum,
   IsNumber,
   IsOptional,
   IsString,
   ValidateNested,
 } from 'class-validator';
+import { FormaPago } from '../domain/types';
 
 export class ConfirmCompradorDto {
   @IsOptional()
@@ -60,6 +62,6 @@ export class ConfirmDraftDto {
   detalles: ConfirmDetalleDto[];
 
   @IsOptional()
-  @IsString()
-  formaPago?: string;
+  @IsEnum(FormaPago)
+  formaPago?: FormaPago;
 }

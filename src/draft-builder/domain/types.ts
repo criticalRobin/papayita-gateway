@@ -4,6 +4,17 @@ import {
 } from '../../catalog/catalog-search.interface';
 import { EmisorProfile } from '../../emisor/emisor-client.interface';
 
+/**
+ * SRI Tabla 11 (formas de pago) — subset this gateway supports at launch.
+ * Values are the SRI-assigned codes, not arbitrary — never renumber.
+ */
+export enum FormaPago {
+  EFECTIVO = '01',
+  TARJETA_DEBITO = '16',
+  TARJETA_CREDITO = '19',
+  TRANSFERENCIA = '20',
+}
+
 export interface InvoiceSkeleton {
   ambiente: string;
   tipoEmision: string;
@@ -80,7 +91,7 @@ export interface FinalInvoiceDetalle {
 }
 
 export interface FinalInvoicePago {
-  formaPago: string;
+  formaPago: FormaPago;
   total: number;
   plazo: number;
   unidadTiempo: string;

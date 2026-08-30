@@ -1,5 +1,10 @@
 import { assembleInvoice } from './assemble-invoice';
-import { CompradorDraft, FinalInvoiceDetalle, InvoiceSkeleton } from './types';
+import {
+  CompradorDraft,
+  FinalInvoiceDetalle,
+  FormaPago,
+  InvoiceSkeleton,
+} from './types';
 
 const skeleton: InvoiceSkeleton = {
   ambiente: '1',
@@ -50,7 +55,12 @@ const validDetalle: FinalInvoiceDetalle = {
 
 describe('assembleInvoice', () => {
   it('assembles a full invoice with no secuencial key, passing detalles (with impuestos) through as-is', () => {
-    const invoice = assembleInvoice(skeleton, comprador, [validDetalle], '01');
+    const invoice = assembleInvoice(
+      skeleton,
+      comprador,
+      [validDetalle],
+      FormaPago.EFECTIVO,
+    );
 
     expect(invoice).not.toHaveProperty('secuencial');
     expect(invoice.detalles[0].impuestos).toEqual(validDetalle.impuestos);
@@ -70,14 +80,14 @@ describe('assembleInvoice', () => {
       skeleton,
       comprador,
       [validDetalle, { ...validDetalle, cantidad: 2, precioUnitario: 15.99 }],
-      '01',
+      FormaPago.EFECTIVO,
     );
 
     expect(invoice.pagos).toEqual([
       {
-        formaPago: '01',
+        formaPago: FormaPago.EFECTIVO,
         total: 499.99 + 2 * 15.99,
-        plazo: 1,
+        plazo: 0,
         unidadTiempo: 'dias',
       },
     ]);
@@ -85,6 +95,6 @@ describe('assembleInvoice', () => {
 
   it('defaults formaPago to "01" (efectivo) when not provided', () => {
     const invoice = assembleInvoice(skeleton, comprador, [validDetalle]);
-    expect(invoice.pagos[0].formaPago).toBe('01');
+    expect(invoice.pagos[0].formaPago).toBe(FormaPago.EFECTIVO);
   });
 });

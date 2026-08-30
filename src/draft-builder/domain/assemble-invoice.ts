@@ -4,16 +4,17 @@ import {
   FinalInvoice,
   FinalInvoiceComprador,
   FinalInvoiceDetalle,
+  FormaPago,
   InvoiceSkeleton,
 } from './types';
 
-const DEFAULT_FORMA_PAGO = '01'; // efectivo
+const DEFAULT_FORMA_PAGO = FormaPago.EFECTIVO;
 
 export function assembleInvoice(
   skeleton: InvoiceSkeleton,
   comprador: CompradorDraft,
   detalles: FinalInvoiceDetalle[],
-  formaPago?: string,
+  formaPago?: FormaPago,
 ): FinalInvoice {
   const { verified: _verified, ...compradorFields } = comprador;
   void _verified;
@@ -34,7 +35,9 @@ export function assembleInvoice(
       {
         formaPago: formaPago ?? DEFAULT_FORMA_PAGO,
         total,
-        plazo: 1,
+        // No credit-terms concept yet — every supported forma de pago
+        // (efectivo, débito, crédito, transferencia) is immediate payment.
+        plazo: 0,
         unidadTiempo: 'dias',
       },
     ],

@@ -6,10 +6,12 @@ import { SttModule } from '../stt/stt.module';
 import { ClassificationModule } from '../classification/classification.module';
 import { ConversationStateModule } from '../conversation-state/conversation-state.module';
 import { WhatsappInboundProcessor } from './processors/whatsapp-inbound.processor';
+import { InvoiceEmissionProcessor } from './processors/invoice-emission.processor';
 import { ExtractionModule } from '../extraction/extraction.module';
 import { AuthModule } from '../auth/auth.module';
 import { WebviewAuthModule } from '../webview-auth/webview-auth.module';
 import { DraftBuilderModule } from '../draft-builder/draft-builder.module';
+import { InvoiceEmissionModule } from '../invoice-emission/invoice-emission.module';
 
 @Module({
   imports: [
@@ -30,6 +32,13 @@ import { DraftBuilderModule } from '../draft-builder/draft-builder.module';
         backoff: { type: 'exponential', delay: 5000 },
       },
     }),
+    BullModule.registerQueue({
+      name: 'invoice-emission-events',
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+      },
+    }),
     WhatsappClientModule,
     SttModule,
     ClassificationModule,
@@ -38,8 +47,9 @@ import { DraftBuilderModule } from '../draft-builder/draft-builder.module';
     AuthModule,
     WebviewAuthModule,
     DraftBuilderModule,
+    InvoiceEmissionModule,
   ],
-  providers: [WhatsappInboundProcessor],
+  providers: [WhatsappInboundProcessor, InvoiceEmissionProcessor],
   exports: [BullModule],
 })
 export class QueueModule {}

@@ -12,4 +12,5 @@ export interface CoreApiClient {
   refresh(refreshToken: string): Promise<CoreApiTokenSet>;
   post<T>(path: string, token: CoreApiUserToken, body: unknown): Promise<T>;
   get<T>(path: string, token: CoreApiUserToken): Promise<T>;
+  getBinary(path: string, token: CoreApiUserToken): Promise<Buffer>;
 }

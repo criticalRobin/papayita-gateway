@@ -18,8 +18,9 @@ import { PERSONA_LOOKUP_CLIENT } from '../persona/persona.module';
 import type { PersonaLookupClient } from '../persona/persona-lookup.interface';
 import { EMISOR_CLIENT } from '../emisor/emisor.module';
 import type { EmisorClient } from '../emisor/emisor-client.interface';
-import { WHATSAPP_CLIENT } from '../whatsapp/client/whatsapp.module';
-import type { WhatsappClient } from '../whatsapp/client/whatsapp-client.interface';
+import { INVOICE_EMISSION_CLIENT } from '../invoice-emission/invoice-emission.module';
+import type { InvoiceEmissionClient } from '../invoice-emission/invoice-emission-client.interface';
+import { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
 import { ConversationStateService } from '../conversation-state/conversation-state.service';
 import type { ExtractedBillingAttempt } from '../extraction/domain/types';
 import { buildSkeleton } from './domain/build-skeleton';
@@ -46,7 +47,9 @@ export class DraftBuilderService {
     @Inject(PERSONA_LOOKUP_CLIENT)
     private readonly personaClient: PersonaLookupClient,
     @Inject(EMISOR_CLIENT) private readonly emisorClient: EmisorClient,
-    @Inject(WHATSAPP_CLIENT) private readonly whatsappClient: WhatsappClient,
+    @Inject(INVOICE_EMISSION_CLIENT)
+    private readonly invoiceEmissionClient: InvoiceEmissionClient,
+    private readonly pendingEmissionStore: PendingEmissionStore,
     private readonly conversationStateService: ConversationStateService,
     private readonly config: ConfigService,
   ) {}
@@ -62,7 +65,7 @@ export class DraftBuilderService {
     }
 
     const tipo = deriveTipoIdentificacion(extracted.comprador.identificacion);
-    
+
     const persona =
       tipo && extracted.comprador.identificacion
         ? await this.personaClient.findByIdentificacion(
@@ -84,7 +87,7 @@ export class DraftBuilderService {
       extracted.items,
       searchResults,
     );
-    
+
     const items = mergeCatalogResults(extracted.items, resolutionByIdCliente);
 
     const correlationId = randomUUID();
@@ -201,13 +204,24 @@ export class DraftBuilderService {
       type: 'WEBVIEW_CONFIRMED',
     });
 
-    await this.whatsappClient.sendTextMessage(
-      phoneNumber,
-      JSON.stringify(invoice, null, 2),
-    );
+    try {
+      await this.invoiceEmissionClient.emitir(token, invoice);
+    } catch (error) {
+      // Core API rejected the submission outright or is unreachable — nothing is in
+      // flight there, so reset the conversation instead of leaving it stuck in
+      // "submitting" forever. The customer would need to send a new WhatsApp message
+      // to try again (no webhook will ever arrive for this attempt).
+      await this.conversationStateService.applyEvent(phoneNumber, {
+        type: 'WEBHOOK_RECEIVED',
+      });
+      throw error;
+    }
 
-    await this.conversationStateService.applyEvent(phoneNumber, {
-      type: 'WEBHOOK_RECEIVED',
+    // Correlates the async comprobante.autorizado/rechazado webhook back to this
+    // conversation — see PendingEmissionStore for the emisorId-only limitation.
+    await this.pendingEmissionStore.set(emisorId, {
+      phoneNumber,
+      correlationId,
     });
 
     return invoice;

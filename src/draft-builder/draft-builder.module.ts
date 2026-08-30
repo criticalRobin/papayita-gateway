@@ -6,7 +6,7 @@ import { WebviewSessionModule } from '../webview-session/webview-session.module'
 import { CatalogModule } from '../catalog/catalog.module';
 import { PersonaModule } from '../persona/persona.module';
 import { EmisorModule } from '../emisor/emisor.module';
-import { WhatsappClientModule } from '../whatsapp/client/whatsapp.module';
+import { InvoiceEmissionModule } from '../invoice-emission/invoice-emission.module';
 import { ConversationStateModule } from '../conversation-state/conversation-state.module';
 import { DraftBuilderService } from './draft-builder.service';
 import { DraftBuilderController } from './draft-builder.controller';
@@ -21,7 +21,7 @@ import { AuthExchangeController } from './auth-exchange.controller';
     CatalogModule,
     PersonaModule,
     EmisorModule,
-    WhatsappClientModule,
+    InvoiceEmissionModule,
     ConversationStateModule,
   ],
   controllers: [DraftBuilderController, AuthExchangeController],

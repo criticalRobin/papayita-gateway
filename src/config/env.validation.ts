@@ -42,6 +42,12 @@ export const envSchema = z.object({
 
   SRI_AMBIENTE: z.string().min(1).default('1'),
   SRI_TIPO_EMISION: z.string().min(1).default('1'),
+
+  INVOICE_EMISSION_PENDING_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(3600),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

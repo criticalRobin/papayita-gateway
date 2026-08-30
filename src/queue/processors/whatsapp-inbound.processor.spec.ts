@@ -12,7 +12,13 @@ import type { ConversationStateService } from '../../conversation-state/conversa
 import { createIdleRecord } from '../../conversation-state/domain/state-machine';
 import type { AuthService } from '../../auth/auth.service';
 import type { WebviewAuthService } from '../../webview-auth/webview-auth.service';
+import type { DraftBuilderService } from '../../draft-builder/draft-builder.service';
 import type { LlmClient } from '../../extraction/llm-client.interface';
+import { ExtractionParseError } from '../../extraction/extraction.errors';
+import {
+  RetryableCoreApiError,
+  TerminalCoreApiError,
+} from '../../core-api/core-api.errors';
 import {
   InboundMessageJobDto,
   InboundMessageType,
@@ -22,6 +28,24 @@ import { WhatsappInboundProcessor } from './whatsapp-inbound.processor';
 function makeJob(data: InboundMessageJobDto): Job<InboundMessageJobDto> {
   return { id: data.whatsappMessageId, data } as Job<InboundMessageJobDto>;
 }
+
+const extractedBillingAttempt = {
+  comprador: {
+    tipoIdentificacion: null,
+    identificacion: null,
+    razonSocial: null,
+  },
+  items: [
+    {
+      idCliente: 'item-1',
+      textoConsulta: 'pan',
+      cantidad: 2,
+      precioMencionado: 0.5,
+    },
+  ],
+  precioTotalMencionado: null,
+  formaPagoMencionada: null,
+};
 
 describe('WhatsappInboundProcessor', () => {
   let sendTextMessage: jest.Mock;
@@ -34,6 +58,8 @@ describe('WhatsappInboundProcessor', () => {
   let extract: jest.Mock;
   let getValidToken: jest.Mock;
   let mintLoginCode: jest.Mock;
+  let mintExchangeCode: jest.Mock;
+  let buildDraft: jest.Mock;
   let client: WhatsappClient;
   let sttClient: SttClient;
   let llmClient: LlmClient;
@@ -41,6 +67,7 @@ describe('WhatsappInboundProcessor', () => {
   let conversationStateService: ConversationStateService;
   let authService: AuthService;
   let webviewAuthService: WebviewAuthService;
+  let draftBuilderService: DraftBuilderService;
   let config: ConfigService;
   let processor: WhatsappInboundProcessor;
 
@@ -59,9 +86,13 @@ describe('WhatsappInboundProcessor', () => {
       method: 'rule',
     });
     getState = jest.fn().mockResolvedValue(createIdleRecord());
-    extract = jest.fn().mockResolvedValue('{"products":[]}');
+    extract = jest.fn().mockResolvedValue(extractedBillingAttempt);
     getValidToken = jest.fn().mockResolvedValue('valid-token');
     mintLoginCode = jest.fn().mockResolvedValue('login-code-1');
+    mintExchangeCode = jest.fn().mockResolvedValue('exchange-code-1');
+    buildDraft = jest
+      .fn()
+      .mockResolvedValue({ correlationId: 'corr-1', draft: {} });
     client = { sendTextMessage, sendCtaMessage, downloadMedia, markAsRead };
     sttClient = { transcribe };
     llmClient = { extract };
@@ -70,7 +101,11 @@ describe('WhatsappInboundProcessor', () => {
       getState,
     } as unknown as ConversationStateService;
     authService = { getValidToken } as unknown as AuthService;
-    webviewAuthService = { mintLoginCode } as unknown as WebviewAuthService;
+    webviewAuthService = {
+      mintLoginCode,
+      mintExchangeCode,
+    } as unknown as WebviewAuthService;
+    draftBuilderService = { buildDraft } as unknown as DraftBuilderService;
     config = {
       getOrThrow: () => 'https://webview.test',
     } as unknown as ConfigService;
@@ -82,6 +117,7 @@ describe('WhatsappInboundProcessor', () => {
       conversationStateService,
       authService,
       webviewAuthService,
+      draftBuilderService,
       config,
     );
   });
@@ -227,27 +263,91 @@ describe('WhatsappInboundProcessor', () => {
     },
   );
 
-  it('extracts fields via the LLM client and sends the result for billing attempts', async () => {
-    classify.mockResolvedValue({
-      category: 'billing_attempt',
-      confidence: 1,
-      method: 'rule',
-    });
-    extract.mockResolvedValue('{"products":[{"producto":"pan"}]}');
-    const job = makeJob({
-      phoneNumber: '5219999999999',
-      whatsappMessageId: 'wamid.billing',
-      type: InboundMessageType.TEXT,
-      text: '2 panes a 0.50',
+  describe('billing attempts', () => {
+    beforeEach(() => {
+      classify.mockResolvedValue({
+        category: 'billing_attempt',
+        confidence: 1,
+        method: 'rule',
+      });
     });
 
-    await processor.process(job);
+    it('extracts, builds the draft, mints an exchange code, and sends exactly one CTA (no text reply)', async () => {
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.billing',
+        type: InboundMessageType.TEXT,
+        text: '2 panes a 0.50',
+      });
 
-    expect(extract).toHaveBeenCalledWith('2 panes a 0.50');
-    expect(sendTextMessage).toHaveBeenCalledWith(
-      '5219999999999',
-      '{"products":[{"producto":"pan"}]}',
-    );
+      await processor.process(job);
+
+      expect(extract).toHaveBeenCalledWith('2 panes a 0.50');
+      expect(buildDraft).toHaveBeenCalledWith(
+        '5219999999999',
+        extractedBillingAttempt,
+      );
+      expect(mintExchangeCode).toHaveBeenCalledWith('5219999999999', 'corr-1');
+      expect(sendCtaMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.any(String),
+        expect.any(String),
+        'https://webview.test/draft?code=exchange-code-1',
+      );
+      expect(sendTextMessage).not.toHaveBeenCalled();
+    });
+
+    it('sends the hardcoded failure reply (no CTA) on an extraction parse error', async () => {
+      extract.mockRejectedValue(new ExtractionParseError('bad json'));
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.billing-parse-fail',
+        type: InboundMessageType.TEXT,
+        text: 'texto raro',
+      });
+
+      await processor.process(job);
+
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('facturación'),
+      );
+    });
+
+    it('sends the hardcoded failure reply (no CTA) on a terminal Core API error from draft-builder', async () => {
+      buildDraft.mockRejectedValue(new TerminalCoreApiError('bad request'));
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.billing-terminal',
+        type: InboundMessageType.TEXT,
+        text: '2 panes a 0.50',
+      });
+
+      await processor.process(job);
+
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('facturación'),
+      );
+    });
+
+    it('propagates a retryable Core API error so BullMQ retries the whole job', async () => {
+      buildDraft.mockRejectedValue(new RetryableCoreApiError('network blip'));
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.billing-retryable',
+        type: InboundMessageType.TEXT,
+        text: '2 panes a 0.50',
+      });
+
+      await expect(processor.process(job)).rejects.toThrow(
+        RetryableCoreApiError,
+      );
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(sendTextMessage).not.toHaveBeenCalled();
+    });
   });
 
   it('marks the inbound message as read before building a reply', async () => {
@@ -266,7 +366,7 @@ describe('WhatsappInboundProcessor', () => {
   it('skips classification and echoes the message when mid-billing-flow', async () => {
     getState.mockResolvedValue({
       ...createIdleRecord(),
-      state: 'awaiting_confirmation',
+      state: 'awaiting_webview_action',
     });
     const job = makeJob({
       phoneNumber: '5219999999999',
@@ -342,13 +442,12 @@ describe('WhatsappInboundProcessor', () => {
       });
     }
 
-    it('downloads the media, transcribes it, and classifies the transcript', async () => {
+    it('downloads the media, transcribes it, and classifies the transcript for a billing attempt', async () => {
       classify.mockResolvedValue({
         category: 'billing_attempt',
         confidence: 0.9,
         method: 'embedding',
       });
-      extract.mockResolvedValue('{"products":[]}');
 
       await processor.process(audioJob());
 
@@ -356,10 +455,7 @@ describe('WhatsappInboundProcessor', () => {
       expect(transcribe).toHaveBeenCalledWith(Buffer.from('audio'));
       expect(classify).toHaveBeenCalledWith('quiero facturar dos colas');
       expect(extract).toHaveBeenCalledWith('quiero facturar dos colas');
-      expect(sendTextMessage).toHaveBeenCalledWith(
-        '5219999999999',
-        '{"products":[]}',
-      );
+      expect(sendCtaMessage).toHaveBeenCalled();
     });
 
     it('sends the fallback reply when the transcript is empty', async () => {

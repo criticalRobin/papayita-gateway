@@ -1,40 +1,11 @@
 export const extractionPromptTemplate = (text: string) => {
-  return `
-  Eres un experto extrayendo información de mensajes de texto.
-  Tu tarea es extraer la información del mensaje de texto y devolverla en un formato JSON.
-  No devuelvas ninguna explicacion ni texto adicional, solo el JSON.
+  return `Extrae datos de facturación del texto. Responde solo JSON, sin explicación, con este formato exacto (usa null si un campo no viene en el texto):
+{"comprador":{"tipoIdentificacion":null,"identificacion":null,"razonSocial":null},"items":[{"idCliente":"item-1","textoConsulta":"","cantidad":1,"precioMencionado":null}],"precioTotalMencionado":null,"formaPagoMencionada":null}
 
-  Texto: 
-  ${text}
+Reglas:
+- tipoIdentificacion: "04" si dice RUC, "05" si dice cédula, si no null.
+- items: uno por producto mencionado. idCliente secuencial ("item-1","item-2"...). textoConsulta = como lo describió el cliente (para buscarlo en catálogo). cantidad = entero mencionado o 1 si no se menciona.
+- formaPagoMencionada: ej. "efectivo","tarjeta".
 
-  Debes extraer la siguiente información:
-  -Nombre del producto: ejemplo: "pan integral", "leche", "huevos"
-  -Precio Unitario: ejemplo: "10.5", "20.0", "5.5" 
-  -Cantidad (número): ejemplo: "1", "2", "3" 
-  -Total (si viene dentro del mensaje, sino calcular en base a precio y cantidad, si no se puede calcular poner "null"): ejemplo: "10.5", "20.0", "5.5"
-  -Identificación Cliente: ejemplo: "123456789"
-  -Razón Social (si no viene dentro del mensaje, poner "null"): ejemplo: "Juan Lopez"
-  -Teléfono Cliente (si no viene dentro del mensaje, poner "null"): ejemplo: "123456789"
-  -Dirección Cliente (si no viene dentro del mensaje, poner "null"): ejemplo: "Calle Falsa 123"
-  -Correo Cliente (si no viene dentro del mensaje, poner "null"): ejemplo: "[EMAIL_ADDRESS]"
-
-  Devuelve solo el JSON con el siguiente formato:
-  {
-    "products": [
-      {
-        "producto": "",
-        "precioUnitario": "",
-        "cantidad": ""
-      }
-    ],
-    "customerInfo": {
-      "identificacion": "",
-      "razonSocial": "",
-      "telefono": "",
-      "direccion": "",
-      "email": ""
-    },
-    "totalFactura": ""
-  }
-  `;
+Texto: ${text}`;
 };

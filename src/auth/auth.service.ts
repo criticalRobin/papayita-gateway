@@ -15,6 +15,7 @@ interface CachedToken {
   accessToken: string;
   refreshToken: string;
   expiresAt: string;
+  emisorId: string;
 }
 
 @Injectable()
@@ -66,6 +67,16 @@ export class AuthService {
     this.logger.log(`phone=${maskTail(phoneNumber)} authenticated`);
   }
 
+  // Static per account (doesn't change on refresh) — read straight from the
+  // cached record, no expiry/refresh dance needed. Returns null only if the
+  // phone was never logged in.
+  async getEmisorId(phoneNumber: string): Promise<string | null> {
+    const raw = await this.redis.get(this.key(phoneNumber));
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as CachedToken;
+    return cached.emisorId;
+  }
+
   private async cache(
     phoneNumber: string,
     token: CoreApiTokenSet,
@@ -74,6 +85,7 @@ export class AuthService {
       accessToken: token.accessToken,
       refreshToken: token.refreshToken,
       expiresAt: token.expiresAt.toISOString(),
+      emisorId: token.emisorId,
     };
     // No Redis TTL — lifetime is managed by refresh/clear above, not expiry.
     await this.redis.set(this.key(phoneNumber), JSON.stringify(record));

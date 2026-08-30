@@ -31,6 +31,11 @@ export const SEED_PHRASES: Record<IntentCategory, string[]> = {
     'quiero emitir un comprobante para un cliente',
     'necesito facturar una venta de hoy',
     'hazme una factura de dos pizzas',
+    'emite una factura por la venta de dos productos al cliente 1850137918',
+    'vendi un manga y una figura necesito la factura de estos productos',
+    'cobra esta venta y hazme la factura por favor',
+    'necesito facturar varios articulos a un cliente',
+    'genera el comprobante de esta venta a nombre del cliente',
   ],
   out_of_context: [],
 };

@@ -41,9 +41,13 @@ describe('ClassificationService', () => {
   });
 
   it('classifies via embedding similarity when no rule matches', async () => {
+    // Deliberately avoids the rule fast-path's verb/id-number patterns (see
+    // rules.spec.ts) so this test actually exercises embedding scoring.
+    const novelPhrasing =
+      'hoy vendi una torta y quiero el documento correspondiente';
     const embed = jest.fn((text: string) =>
       Promise.resolve(
-        text === 'necesito una factura para un cliente nuevo'
+        text === novelPhrasing
           ? CATEGORY_AXIS.billing_attempt
           : axisForPhrase(text),
       ),
@@ -51,9 +55,7 @@ describe('ClassificationService', () => {
     const provider: EmbeddingProvider = { embed };
     const service = new ClassificationService(provider, makeConfig(0.5));
 
-    const result = await service.classify(
-      'necesito una factura para un cliente nuevo',
-    );
+    const result = await service.classify(novelPhrasing);
 
     expect(result.category).toBe('billing_attempt');
     expect(result.method).toBe('embedding');

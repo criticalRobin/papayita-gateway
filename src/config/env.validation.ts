@@ -39,6 +39,9 @@ export const envSchema = z.object({
   CORE_API_BASE_URL: z.string().url(),
   WEBVIEW_BASE_URL: z.string().url(),
   LOGIN_CODE_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+
+  SRI_AMBIENTE: z.string().min(1).default('1'),
+  SRI_TIPO_EMISION: z.string().min(1).default('1'),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

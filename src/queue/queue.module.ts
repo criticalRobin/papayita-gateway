@@ -9,6 +9,7 @@ import { WhatsappInboundProcessor } from './processors/whatsapp-inbound.processo
 import { ExtractionModule } from '../extraction/extraction.module';
 import { AuthModule } from '../auth/auth.module';
 import { WebviewAuthModule } from '../webview-auth/webview-auth.module';
+import { DraftBuilderModule } from '../draft-builder/draft-builder.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { WebviewAuthModule } from '../webview-auth/webview-auth.module';
     ExtractionModule,
     AuthModule,
     WebviewAuthModule,
+    DraftBuilderModule,
   ],
   providers: [WhatsappInboundProcessor],
   exports: [BullModule],

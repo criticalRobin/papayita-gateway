@@ -25,6 +25,7 @@ interface CachedTokenShape {
   accessToken: string;
   refreshToken: string;
   expiresAt: string;
+  emisorId: string;
 }
 
 describe('AuthService', () => {
@@ -49,6 +50,7 @@ describe('AuthService', () => {
           accessToken: 'access-1',
           refreshToken: 'refresh-1',
           expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          emisorId: 'emisor-1',
         }),
       ],
     ]);
@@ -71,6 +73,7 @@ describe('AuthService', () => {
           accessToken: 'access-old',
           refreshToken: 'refresh-1',
           expiresAt: new Date(Date.now() + 1_000).toISOString(),
+          emisorId: 'emisor-1',
         }),
       ],
     ]);
@@ -79,6 +82,7 @@ describe('AuthService', () => {
       accessToken: 'access-new' as CoreApiUserToken,
       refreshToken: 'refresh-2',
       expiresAt: new Date(Date.now() + 3_600_000),
+      emisorId: 'emisor-1',
     });
     const coreApiClient = { refresh } as unknown as CoreApiClient;
     const service = new AuthService(coreApiClient, redis);
@@ -101,6 +105,7 @@ describe('AuthService', () => {
           accessToken: 'access-old',
           refreshToken: 'refresh-expired',
           expiresAt: new Date(Date.now() - 1_000).toISOString(),
+          emisorId: 'emisor-1',
         }),
       ],
     ]);
@@ -125,6 +130,7 @@ describe('AuthService', () => {
           accessToken: 'access-old',
           refreshToken: 'refresh-1',
           expiresAt: new Date(Date.now() - 1_000).toISOString(),
+          emisorId: 'emisor-1',
         }),
       ],
     ]);
@@ -148,6 +154,7 @@ describe('AuthService', () => {
       accessToken: 'access-1' as CoreApiUserToken,
       refreshToken: 'refresh-1',
       expiresAt: new Date(Date.now() + 3_600_000),
+      emisorId: 'emisor-1',
     });
     const coreApiClient = { login } as unknown as CoreApiClient;
     const service = new AuthService(coreApiClient, redis);
@@ -159,5 +166,42 @@ describe('AuthService', () => {
       (JSON.parse(store.get(`auth:${phoneNumber}`)!) as CachedTokenShape)
         .accessToken,
     ).toBe('access-1');
+    expect(
+      (JSON.parse(store.get(`auth:${phoneNumber}`)!) as CachedTokenShape)
+        .emisorId,
+    ).toBe('emisor-1');
+  });
+
+  describe('getEmisorId', () => {
+    it('returns null when the phone has never logged in', async () => {
+      const store = new Map<string, string>();
+      const redis = makeRedis(store);
+      const service = new AuthService({} as unknown as CoreApiClient, redis);
+
+      expect(await service.getEmisorId(phoneNumber)).toBeNull();
+    });
+
+    it('returns the cached emisorId without triggering a refresh', async () => {
+      const store = new Map<string, string>([
+        [
+          `auth:${phoneNumber}`,
+          JSON.stringify({
+            accessToken: 'access-1',
+            refreshToken: 'refresh-1',
+            expiresAt: new Date(Date.now() - 1_000).toISOString(), // expired, irrelevant here
+            emisorId: 'emisor-1',
+          }),
+        ],
+      ]);
+      const redis = makeRedis(store);
+      const refresh = jest.fn();
+      const service = new AuthService(
+        { refresh } as unknown as CoreApiClient,
+        redis,
+      );
+
+      expect(await service.getEmisorId(phoneNumber)).toBe('emisor-1');
+      expect(refresh).not.toHaveBeenCalled();
+    });
   });
 });

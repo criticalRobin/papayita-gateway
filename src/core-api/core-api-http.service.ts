@@ -12,6 +12,7 @@ interface LoginResponse {
   accessToken: string;
   refreshToken: string;
   expiresAt: string;
+  user: { emisorId: string };
 }
 
 @Injectable()
@@ -53,11 +54,42 @@ export class CoreApiHttpService implements CoreApiClient {
     }
   }
 
+  async post<T>(
+    path: string,
+    token: CoreApiUserToken,
+    body: unknown,
+  ): Promise<T> {
+    try {
+      const { data } = await firstValueFrom(
+        this.httpService.post<T>(`${this.baseUrl}${path}`, body, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      );
+      return data;
+    } catch (error) {
+      throw this.mapError(error, `POST ${path}`);
+    }
+  }
+
+  async get<T>(path: string, token: CoreApiUserToken): Promise<T> {
+    try {
+      const { data } = await firstValueFrom(
+        this.httpService.get<T>(`${this.baseUrl}${path}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      );
+      return data;
+    } catch (error) {
+      throw this.mapError(error, `GET ${path}`);
+    }
+  }
+
   private toTokenSet(data: LoginResponse): CoreApiTokenSet {
     return {
       accessToken: data.accessToken as CoreApiUserToken,
       refreshToken: data.refreshToken,
       expiresAt: new Date(data.expiresAt),
+      emisorId: data.user.emisorId,
     };
   }
 
@@ -74,11 +106,13 @@ export class CoreApiHttpService implements CoreApiClient {
     if (status === undefined || status >= 500 || status === 429) {
       return new RetryableCoreApiError(
         `Core API call failed (status ${status ?? 'network'}) for ${context}`,
+        status,
       );
     }
-    // 401/400 here means bad credentials or an invalid/expired refresh token — retrying won't help.
+    // 401/400/404 here means bad credentials, invalid input, or not-found — retrying won't help.
     return new TerminalCoreApiError(
       `Core API call rejected (status ${status}) for ${context}`,
+      status,
     );
   }
 }

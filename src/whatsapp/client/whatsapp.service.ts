@@ -50,9 +50,6 @@ export class WhatsappService implements WhatsappClient {
     }
   }
 
-  // Meta's interactive "cta_url" message — one message that both explains
-  // what's happening and opens the in-app browser, per project-info.md's
-  // "bundle, never drip-feed" rule.
   async sendCtaMessage(
     to: string,
     bodyText: string,
@@ -149,12 +146,13 @@ export class WhatsappService implements WhatsappClient {
     this.logger.error(
       `Graph API error body for ${context}: ${JSON.stringify(error.response?.data)}`,
     );
-    // No response (network/timeout), 5xx, or 429 rate limit: worth retrying.
+
     if (status === undefined || status >= 500 || status === 429) {
       return new RetryableWhatsappError(
         `WhatsApp Graph API call failed (status ${status ?? 'network'}) for ${context}`,
       );
     }
+
     return new TerminalWhatsappError(
       `WhatsApp Graph API call rejected (status ${status}) for ${context}`,
     );

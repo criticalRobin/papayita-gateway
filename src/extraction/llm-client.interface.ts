@@ -1,3 +1,5 @@
+import { ExtractedBillingAttempt } from './domain/types';
+
 export interface LlmClient {
-  extract(prompt: string): Promise<string>;
+  extract(prompt: string): Promise<ExtractedBillingAttempt>;
 }

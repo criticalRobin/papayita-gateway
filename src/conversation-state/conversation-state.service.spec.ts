@@ -23,14 +23,14 @@ describe('ConversationStateService', () => {
   });
 
   it('parses an existing record from Redis', async () => {
-    const stored = { ...createIdleRecord(), state: 'awaiting_confirmation' };
+    const stored = { ...createIdleRecord(), state: 'awaiting_webview_action' };
     const redis = makeRedis();
     redis.get.mockResolvedValue(JSON.stringify(stored));
     const service = new ConversationStateService(redis as never, makeConfig());
 
     const state = await service.getState('5219999999999');
 
-    expect(state.state).toBe('awaiting_confirmation');
+    expect(state.state).toBe('awaiting_webview_action');
   });
 
   it('applyEvent persists the transitioned record and refreshes the TTL', async () => {
@@ -42,11 +42,12 @@ describe('ConversationStateService', () => {
     );
 
     const next = await service.applyEvent('5219999999999', {
-      type: 'BILLING_ATTEMPT_PARSED',
+      type: 'DRAFT_READY',
+      correlationId: 'corr-1',
       draft: { total: 5 },
     });
 
-    expect(next.state).toBe('awaiting_confirmation');
+    expect(next.state).toBe('awaiting_webview_action');
     expect(redis.set).toHaveBeenCalledWith(
       'conversation:5219999999999',
       expect.any(String),
@@ -64,16 +65,17 @@ describe('ConversationStateService', () => {
       'log',
     );
 
-    // USER_CONFIRMED from idle is a no-op transition (stays idle) per state-machine.ts.
-    await service.applyEvent('5219999999999', { type: 'USER_CONFIRMED' });
+    // WEBVIEW_CONFIRMED from idle is a no-op transition (stays idle) per state-machine.ts.
+    await service.applyEvent('5219999999999', { type: 'WEBVIEW_CONFIRMED' });
     expect(logSpy).not.toHaveBeenCalled();
 
     await service.applyEvent('5219999999999', {
-      type: 'BILLING_ATTEMPT_PARSED',
+      type: 'DRAFT_READY',
+      correlationId: 'corr-1',
       draft: {},
     });
     expect(logSpy).toHaveBeenCalledWith(
-      expect.stringContaining('idle -> awaiting_confirmation'),
+      expect.stringContaining('idle -> awaiting_webview_action'),
     );
   });
 });

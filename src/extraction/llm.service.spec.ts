@@ -2,12 +2,32 @@ import { Logger } from '@nestjs/common';
 import { GoogleGenAI } from '@google/genai';
 import { LlmService } from './llm.service';
 import { extractionPromptTemplate } from './prompt';
+import { ExtractionParseError } from './extraction.errors';
+
+const validPayload = {
+  comprador: {
+    tipoIdentificacion: null,
+    identificacion: '1850137918',
+    razonSocial: 'Matias Tite',
+  },
+  items: [
+    {
+      idCliente: 'item-1',
+      textoConsulta: 'coca cola',
+      cantidad: 2,
+      precioMencionado: 1.5,
+    },
+  ],
+  precioTotalMencionado: null,
+  formaPagoMencionada: null,
+};
 
 describe('LlmService', () => {
   const model = 'gemini-2.5-flash';
   let createMock: jest.Mock;
   let client: GoogleGenAI;
   let service: LlmService;
+  let errorSpy: jest.SpyInstance;
 
   beforeEach(() => {
     createMock = jest.fn();
@@ -17,7 +37,9 @@ describe('LlmService', () => {
     service = new LlmService(client, model);
 
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
-    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    errorSpy = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -30,25 +52,48 @@ describe('LlmService', () => {
 
   describe('extract', () => {
     it('sends the built prompt and model to the client', async () => {
-      createMock.mockResolvedValue({ output_text: '{"products":[]}' });
+      createMock.mockResolvedValue({
+        output_text: JSON.stringify(validPayload),
+      });
 
-      await service.extract('2 panes a 0.50');
+      await service.extract('2 cocas a 1.50');
 
       expect(createMock).toHaveBeenCalledTimes(1);
       expect(createMock).toHaveBeenCalledWith({
         model,
-        input: extractionPromptTemplate('2 panes a 0.50'),
+        input: extractionPromptTemplate('2 cocas a 1.50'),
+        generation_config: {
+          thinking_level: 'minimal',
+          max_output_tokens: 1024,
+        },
+        response_format: { type: 'text', mime_type: 'application/json' },
       });
     });
 
-    it('returns the output_text from the LLM response', async () => {
-      const raw =
-        '{"products":[{"producto":"pan","precioUnitario":"0.5","cantidad":"2"}]}';
-      createMock.mockResolvedValue({ output_text: raw });
+    it('disables thinking to minimize latency for this fixed-shape extraction task', async () => {
+      createMock.mockResolvedValue({
+        output_text: JSON.stringify(validPayload),
+      });
 
-      const result = await service.extract('2 panes a 0.50');
+      await service.extract('2 cocas a 1.50');
 
-      expect(result).toBe(raw);
+      expect(createMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          generation_config: expect.objectContaining({
+            thinking_level: 'minimal',
+          }) as unknown,
+        }),
+      );
+    });
+
+    it('returns the parsed, typed extraction from the LLM response', async () => {
+      createMock.mockResolvedValue({
+        output_text: JSON.stringify(validPayload),
+      });
+
+      const result = await service.extract('2 cocas a 1.50');
+
+      expect(result).toEqual(validPayload);
     });
 
     it('throws a generic error and logs when the client call rejects', async () => {
@@ -57,7 +102,7 @@ describe('LlmService', () => {
       await expect(service.extract('texto')).rejects.toThrow(
         'Error al extraer información',
       );
-      expect(Logger.prototype.error).toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalled();
     });
 
     it('throws when the response has no output_text', async () => {
@@ -73,6 +118,17 @@ describe('LlmService', () => {
 
       await expect(service.extract('texto')).rejects.toThrow(
         'No response from LLM',
+      );
+    });
+
+    it('throws ExtractionParseError and logs without the raw text when output is malformed', async () => {
+      createMock.mockResolvedValue({ output_text: '{not json' });
+
+      await expect(service.extract('texto')).rejects.toThrow(
+        ExtractionParseError,
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to parse LLM output'),
       );
     });
   });

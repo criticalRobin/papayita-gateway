@@ -12,6 +12,9 @@ import { ClassificationService } from '../../classification/classification.servi
 import { ConversationStateService } from '../../conversation-state/conversation-state.service';
 import { AuthService } from '../../auth/auth.service';
 import { WebviewAuthService } from '../../webview-auth/webview-auth.service';
+import { DraftBuilderService } from '../../draft-builder/draft-builder.service';
+import { ExtractionParseError } from '../../extraction/extraction.errors';
+import { TerminalCoreApiError } from '../../core-api/core-api.errors';
 import {
   InboundMessageJobDto,
   InboundMessageType,
@@ -34,6 +37,11 @@ const NOT_AUTHENTICATED_REPLY =
   'Para emitir facturas primero debes vincular tu cuenta. Escribe "iniciar sesión" para continuar.';
 const LOGIN_CTA_BODY = 'Vincula tu cuenta para emitir facturas por WhatsApp.';
 const LOGIN_CTA_BUTTON = 'Iniciar sesión';
+const DRAFT_CTA_BODY =
+  'Ya casi terminamos tu factura. Revisa y confirma los datos aquí:';
+const DRAFT_CTA_BUTTON = 'Ver borrador';
+const BILLING_FAILURE_REPLY =
+  'No pudimos procesar tu solicitud de facturación, por favor intenta de nuevo.';
 
 // Accent-insensitive: typing "sesion" without the tilde on a phone keyboard
 // is common. "login" is accepted as a plain-English fallback.
@@ -46,6 +54,14 @@ function isLoginCommand(text: string | undefined): boolean {
     .toLowerCase();
   return normalized === 'iniciar sesion' || normalized === 'login';
 }
+
+// buildReply()/buildClassifiedReply()/buildAudioReply() return one of these:
+// 'text' means process() still needs to send the given text via sendTextMessage;
+// 'handled' means the branch already sent (or terminally failed to send) its
+// own message — billing attempts send a CTA, not a text reply, and must not
+// fall through to the generic text-reply path (2-message budget: exactly one
+// message per outcome).
+type ReplyOutcome = { kind: 'text'; text: string } | { kind: 'handled' };
 
 // concurrency: 1 — global ordering guarantee, see project-info.md / CLAUDE.md. Don't change without understanding why.
 @Processor('whatsapp-messages', { concurrency: 1 })
@@ -60,6 +76,7 @@ export class WhatsappInboundProcessor extends WorkerHost {
     private readonly conversationStateService: ConversationStateService,
     private readonly authService: AuthService,
     private readonly webviewAuthService: WebviewAuthService,
+    private readonly draftBuilderService: DraftBuilderService,
     private readonly config: ConfigService,
   ) {
     super();
@@ -79,7 +96,7 @@ export class WhatsappInboundProcessor extends WorkerHost {
       return;
     }
 
-    const reply = await this.buildReply(
+    const outcome = await this.buildReply(
       phoneNumber,
       type,
       text,
@@ -87,9 +104,11 @@ export class WhatsappInboundProcessor extends WorkerHost {
       job.id,
     );
 
-    await this.sendOrLogTerminal(job.id, () =>
-      this.whatsappClient.sendTextMessage(phoneNumber, reply),
-    );
+    if (outcome.kind === 'text') {
+      await this.sendOrLogTerminal(job.id, () =>
+        this.whatsappClient.sendTextMessage(phoneNumber, outcome.text),
+      );
+    }
   }
 
   private async handleUnauthenticated(
@@ -125,13 +144,12 @@ export class WhatsappInboundProcessor extends WorkerHost {
       await send();
     } catch (error) {
       if (error instanceof TerminalWhatsappError) {
-        // Retrying won't help (bad token, invalid recipient) — log and let the job complete rather than retry forever.
         this.logger.error(
           `terminal send failure on job ${jobId}: ${error.message}`,
         );
         return;
       }
-      throw error; // retryable — BullMQ retries per the queue's configured attempts/backoff
+      throw error;
     }
   }
 
@@ -141,14 +159,14 @@ export class WhatsappInboundProcessor extends WorkerHost {
     text: string | undefined,
     mediaId: string | undefined,
     jobId: string | number | undefined,
-  ): Promise<string> {
+  ): Promise<ReplyOutcome> {
     switch (type) {
       case InboundMessageType.TEXT:
-        return this.buildClassifiedReply(phoneNumber, text as string);
+        return this.buildClassifiedReply(phoneNumber, text as string, jobId);
       case InboundMessageType.AUDIO:
         return this.buildAudioReply(phoneNumber, mediaId as string, jobId);
       case InboundMessageType.UNSUPPORTED:
-        return UNSUPPORTED_REPLY;
+        return { kind: 'text', text: UNSUPPORTED_REPLY };
     }
   }
 
@@ -157,22 +175,76 @@ export class WhatsappInboundProcessor extends WorkerHost {
   private async buildClassifiedReply(
     phoneNumber: string,
     text: string,
-  ): Promise<string> {
+    jobId: string | number | undefined,
+  ): Promise<ReplyOutcome> {
     const record = await this.conversationStateService.getState(phoneNumber);
     if (record.state !== 'idle') {
-      return `Recibimos tu mensaje: "${text}"`;
+      return {
+        kind: 'text',
+        text: `Ya estamos procesando una factura, por favor termina de gestionar el mensaje anterior.`,
+      };
     }
 
     const { category } = await this.classificationService.classify(text);
     switch (category) {
       case 'greeting':
-        return GREETING_REPLY;
+        return { kind: 'text', text: GREETING_REPLY };
       case 'info_request':
-        return INFO_REQUEST_REPLY;
+        return { kind: 'text', text: INFO_REQUEST_REPLY };
       case 'billing_attempt':
-        return this.llmClient.extract(text);
+        await this.handleBillingAttempt(phoneNumber, text, jobId);
+        return { kind: 'handled' };
       case 'out_of_context':
-        return OUT_OF_CONTEXT_REPLY;
+        return { kind: 'text', text: OUT_OF_CONTEXT_REPLY };
+    }
+  }
+
+  // Billing attempts get exactly one message: a CTA linking to the
+  // confirmation webview (success), or a hardcoded failure text (no CTA).
+  // Never both, never a separate "processing" message — the 2-message/bundle
+  // rules (project-info.md constraints #2-3) apply per invoice interaction,
+  // and this is message 1 of 2.
+  private async handleBillingAttempt(
+    phoneNumber: string,
+    text: string,
+    jobId: string | number | undefined,
+  ): Promise<void> {
+    try {
+      const extracted = await this.llmClient.extract(text);
+      const { correlationId } = await this.draftBuilderService.buildDraft(
+        phoneNumber,
+        extracted,
+      );
+      const code = await this.webviewAuthService.mintExchangeCode(
+        phoneNumber,
+        correlationId,
+      );
+      const webviewBaseUrl = this.config.getOrThrow<string>('WEBVIEW_BASE_URL');
+      await this.sendOrLogTerminal(jobId, () =>
+        this.whatsappClient.sendCtaMessage(
+          phoneNumber,
+          DRAFT_CTA_BODY,
+          DRAFT_CTA_BUTTON,
+          `${webviewBaseUrl}/draft?code=${code}`,
+        ),
+      );
+    } catch (error) {
+      if (
+        error instanceof ExtractionParseError ||
+        error instanceof TerminalCoreApiError
+      ) {
+        this.logger.error(
+          `billing attempt failed for job ${jobId}: ${error.message}`,
+        );
+        await this.sendOrLogTerminal(jobId, () =>
+          this.whatsappClient.sendTextMessage(
+            phoneNumber,
+            BILLING_FAILURE_REPLY,
+          ),
+        );
+        return;
+      }
+      throw error; // RetryableCoreApiError / unexpected — propagate so BullMQ retries the whole job
     }
   }
 
@@ -185,15 +257,15 @@ export class WhatsappInboundProcessor extends WorkerHost {
     phoneNumber: string,
     mediaId: string,
     jobId: string | number | undefined,
-  ): Promise<string> {
+  ): Promise<ReplyOutcome> {
     try {
       const { buffer } = await this.whatsappClient.downloadMedia(mediaId);
       const transcript = await this.sttClient.transcribe(buffer);
       if (!transcript) {
         this.logger.warn(`empty transcript for job ${jobId}`);
-        return STT_FAILURE_REPLY;
+        return { kind: 'text', text: STT_FAILURE_REPLY };
       }
-      return this.buildClassifiedReply(phoneNumber, transcript);
+      return this.buildClassifiedReply(phoneNumber, transcript, jobId);
     } catch (error) {
       if (
         error instanceof TerminalWhatsappError ||
@@ -202,7 +274,7 @@ export class WhatsappInboundProcessor extends WorkerHost {
         this.logger.error(
           `terminal audio-processing failure on job ${jobId}: ${error.message}`,
         );
-        return STT_FAILURE_REPLY;
+        return { kind: 'text', text: STT_FAILURE_REPLY };
       }
       throw error; // RetryableWhatsappError / RetryableSttError — let BullMQ retry
     }

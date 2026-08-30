@@ -1,73 +1,57 @@
 export type ConversationState =
-  'idle' | 'awaiting_confirmation' | 'submitting' | 'escalated';
+  'idle' | 'awaiting_webview_action' | 'submitting';
 
 export interface ConversationRecord {
   state: ConversationState;
-  correctionCount: number;
-  pendingDocument: unknown | null;
-  // Core API correlation id — unused until core-api client exists.
+  pendingDocument: unknown;
   correlationId: string | null;
-  // Stamped by the service on save; transition() never reads the clock so it
-  // stays a plain, deterministic function (data in, data out).
   updatedAt: string;
 }
 
 export type ConversationEvent =
-  | { type: 'BILLING_ATTEMPT_PARSED'; draft: unknown }
-  | { type: 'USER_CONFIRMED' }
-  | { type: 'USER_CORRECTED'; draft: unknown }
+  | { type: 'DRAFT_READY'; correlationId: string; draft: unknown }
+  | { type: 'WEBVIEW_CONFIRMED' }
   | { type: 'WEBHOOK_RECEIVED' };
 
 export function createIdleRecord(): ConversationRecord {
   return {
     state: 'idle',
-    correctionCount: 0,
     pendingDocument: null,
     correlationId: null,
     updatedAt: new Date(0).toISOString(),
   };
 }
 
-// Pure state machine per project-info.md:
-//   idle -> (billing attempt parsed) -> awaiting_confirmation
-//   awaiting_confirmation -> (user confirms) -> submitting
-//   awaiting_confirmation -> (correction, correctionCount == 0) -> awaiting_confirmation (correctionCount = 1)
-//   awaiting_confirmation -> (still wrong, correctionCount == 1) -> escalated
-//   submitting -> (webhook received) -> idle
+// Pure state machine per coding-guide.md / project-info.md's webview-era design:
+//   idle -> (billing attempt classified, draft built, CTA sent) -> awaiting_webview_action
+//   awaiting_webview_action -> (user submits via webview) -> submitting
+//   awaiting_webview_action -> (exchange code expires unused) -> idle   [Redis TTL, no explicit transition]
+//   submitting -> (webhook success/failure) -> idle
+//
+// No correction-loop cap: editing now happens inside the webview session before
+// confirmation (zero WhatsApp message cost per edit), so the state machine doesn't
+// represent it at all.
 export function transition(
   record: ConversationRecord,
   event: ConversationEvent,
 ): ConversationRecord {
   switch (event.type) {
-    case 'BILLING_ATTEMPT_PARSED':
+    case 'DRAFT_READY':
       if (record.state !== 'idle') {
         return record;
       }
       return {
         ...record,
-        state: 'awaiting_confirmation',
+        state: 'awaiting_webview_action',
+        correlationId: event.correlationId,
         pendingDocument: event.draft,
       };
 
-    case 'USER_CONFIRMED':
-      if (record.state !== 'awaiting_confirmation') {
+    case 'WEBVIEW_CONFIRMED':
+      if (record.state !== 'awaiting_webview_action') {
         return record;
       }
       return { ...record, state: 'submitting' };
-
-    case 'USER_CORRECTED':
-      if (record.state !== 'awaiting_confirmation') {
-        return record;
-      }
-      if (record.correctionCount >= 1) {
-        return { ...record, state: 'escalated' };
-      }
-      return {
-        ...record,
-        state: 'awaiting_confirmation',
-        correctionCount: record.correctionCount + 1,
-        pendingDocument: event.draft,
-      };
 
     case 'WEBHOOK_RECEIVED':
       if (record.state !== 'submitting') {
@@ -76,7 +60,6 @@ export function transition(
       return {
         ...record,
         state: 'idle',
-        correctionCount: 0,
         pendingDocument: null,
         correlationId: null,
       };

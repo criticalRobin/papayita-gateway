@@ -203,4 +203,84 @@ describe('WhatsappService', () => {
       ).rejects.toThrow(RetryableWhatsappError);
     });
   });
+
+  describe('uploadMedia', () => {
+    it('posts a multipart form with the file and returns the media id', async () => {
+      const post = jest
+        .fn()
+        .mockReturnValueOnce(of({ data: { id: 'media-1' } }));
+      const httpService = { post } as unknown as HttpService;
+      const service = new WhatsappService(httpService, config);
+
+      const result = await service.uploadMedia(
+        Buffer.from('pdf-bytes'),
+        'application/pdf',
+        'factura.pdf',
+      );
+
+      expect(result).toBe('media-1');
+      expect(post).toHaveBeenCalledWith(
+        'https://graph.facebook.com/v21.0/phone-id/media',
+        expect.anything(),
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer token',
+          }) as unknown,
+        }),
+      );
+    });
+
+    it('maps a 5xx failure to RetryableWhatsappError', async () => {
+      const post = jest
+        .fn()
+        .mockReturnValueOnce(throwError(() => axiosError(500)));
+      const httpService = { post } as unknown as HttpService;
+      const service = new WhatsappService(httpService, config);
+
+      await expect(
+        service.uploadMedia(Buffer.from('x'), 'application/pdf', 'a.pdf'),
+      ).rejects.toThrow(RetryableWhatsappError);
+    });
+  });
+
+  describe('sendDocumentMessage', () => {
+    it('posts a document message referencing the uploaded media id', async () => {
+      const post = jest.fn().mockReturnValueOnce(of({ data: {} }));
+      const httpService = { post } as unknown as HttpService;
+      const service = new WhatsappService(httpService, config);
+
+      await service.sendDocumentMessage(
+        '5219999999999',
+        'media-1',
+        'factura.pdf',
+      );
+
+      expect(post).toHaveBeenCalledWith(
+        'https://graph.facebook.com/v21.0/phone-id/messages',
+        {
+          messaging_product: 'whatsapp',
+          to: '5219999999999',
+          type: 'document',
+          document: {
+            id: 'media-1',
+            filename: 'factura.pdf',
+            caption: undefined,
+          },
+        },
+        { headers: { Authorization: 'Bearer token' } },
+      );
+    });
+
+    it('maps a 5xx failure to RetryableWhatsappError', async () => {
+      const post = jest
+        .fn()
+        .mockReturnValueOnce(throwError(() => axiosError(500)));
+      const httpService = { post } as unknown as HttpService;
+      const service = new WhatsappService(httpService, config);
+
+      await expect(
+        service.sendDocumentMessage('5219999999999', 'media-1', 'factura.pdf'),
+      ).rejects.toThrow(RetryableWhatsappError);
+    });
+  });
 });

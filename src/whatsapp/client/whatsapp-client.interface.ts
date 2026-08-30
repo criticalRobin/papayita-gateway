@@ -13,4 +13,15 @@ export interface WhatsappClient {
   ): Promise<void>;
   downloadMedia(mediaId: string): Promise<WhatsappMedia>;
   markAsRead(messageId: string): Promise<void>;
+  uploadMedia(
+    buffer: Buffer,
+    mimeType: string,
+    filename: string,
+  ): Promise<string>;
+  sendDocumentMessage(
+    to: string,
+    mediaId: string,
+    filename: string,
+    caption?: string,
+  ): Promise<void>;
 }

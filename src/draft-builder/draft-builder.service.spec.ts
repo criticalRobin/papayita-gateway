@@ -18,7 +18,12 @@ interface MockOverrides {
   catalogClient?: { searchBatch?: jest.Mock; getDetalles?: jest.Mock };
   personaClient?: { findByIdentificacion?: jest.Mock };
   emisorClient?: { getProfile?: jest.Mock };
-  whatsappClient?: { sendTextMessage?: jest.Mock };
+  invoiceEmissionClient?: { emitir?: jest.Mock; getRide?: jest.Mock };
+  pendingEmissionStore?: {
+    set?: jest.Mock;
+    get?: jest.Mock;
+    clear?: jest.Mock;
+  };
   conversationStateService?: { applyEvent?: jest.Mock; getState?: jest.Mock };
   config?: { getOrThrow?: jest.Mock };
 }
@@ -58,12 +63,18 @@ function makeService(overrides: MockOverrides = {}) {
     getProfile: jest.fn().mockResolvedValue(emisorProfile),
     ...overrides.emisorClient,
   };
-  const whatsappClient = {
-    sendTextMessage: jest.fn().mockResolvedValue(undefined),
-    sendCtaMessage: jest.fn().mockResolvedValue(undefined),
-    downloadMedia: jest.fn().mockResolvedValue({ buffer: Buffer.from(''), mimeType: '' }),
-    markAsRead: jest.fn().mockResolvedValue(undefined),
-    ...overrides.whatsappClient,
+  const invoiceEmissionClient = {
+    emitir: jest
+      .fn()
+      .mockResolvedValue({ mensaje: 'ok', jobId: 'job-1', estado: 'EN_COLA' }),
+    getRide: jest.fn().mockResolvedValue(Buffer.from('')),
+    ...overrides.invoiceEmissionClient,
+  };
+  const pendingEmissionStore = {
+    set: jest.fn().mockResolvedValue(undefined),
+    get: jest.fn().mockResolvedValue(null),
+    clear: jest.fn().mockResolvedValue(undefined),
+    ...overrides.pendingEmissionStore,
   };
   const applyEvent =
     overrides.conversationStateService?.applyEvent ??
@@ -83,7 +94,8 @@ function makeService(overrides: MockOverrides = {}) {
     catalogClient,
     personaClient,
     emisorClient,
-    whatsappClient,
+    invoiceEmissionClient,
+    pendingEmissionStore,
     conversationStateService,
     config,
   );
@@ -94,7 +106,8 @@ function makeService(overrides: MockOverrides = {}) {
     catalogClient,
     personaClient,
     emisorClient,
-    whatsappClient,
+    invoiceEmissionClient,
+    pendingEmissionStore,
     conversationStateService,
     applyEvent,
     config,
@@ -335,12 +348,13 @@ describe('DraftBuilderService', () => {
       ).rejects.toThrow(UnauthorizedException);
     });
 
-    it('assembles the invoice from /inventario/productos/detalles (with impuestos), sends it as the WhatsApp result message, and transitions to submitting', async () => {
+    it('assembles the invoice from /inventario/productos/detalles (with impuestos), emits it to Core API, and stores the pending emission instead of resolving synchronously', async () => {
       const {
         service,
         applyEvent,
         catalogClient,
-        whatsappClient,
+        invoiceEmissionClient,
+        pendingEmissionStore,
         emisorClient,
       } = makeService({
         conversationStateService: {
@@ -378,16 +392,48 @@ describe('DraftBuilderService', () => {
         ps5ProductoDetalle.impuestos,
       );
       expect(invoice.comprador.email).toBe('matiastite1@gmail.com');
-      expect(whatsappClient.sendTextMessage).toHaveBeenCalledWith(
-        '+593993908744',
-        JSON.stringify(invoice, null, 2),
-      );
+      expect(invoiceEmissionClient.emitir).toHaveBeenCalledWith(token, invoice);
+      expect(pendingEmissionStore.set).toHaveBeenCalledWith(emisorId, {
+        phoneNumber: '+593993908744',
+        correlationId: 'corr-1',
+      });
       expect(applyEvent).toHaveBeenCalledWith('+593993908744', {
         type: 'WEBVIEW_CONFIRMED',
       });
-      // No real submission/webhook to wait on yet — the result message above
-      // stands in for it, so the conversation must return to idle right
-      // after, not get stuck in `submitting`.
+      // Waiting on Core API's async webhook now — must NOT reset to idle here.
+      expect(applyEvent).not.toHaveBeenCalledWith('+593993908744', {
+        type: 'WEBHOOK_RECEIVED',
+      });
+    });
+
+    it('resets the conversation to idle and rethrows when Core API rejects the emission', async () => {
+      const emitError = new Error('Core API call rejected (status 400)');
+      const { service, applyEvent, pendingEmissionStore } = makeService({
+        conversationStateService: {
+          getState: jest.fn().mockResolvedValue(draftState()),
+        },
+        catalogClient: {
+          getDetalles: jest.fn().mockResolvedValue([ps5ProductoDetalle]),
+        },
+        invoiceEmissionClient: {
+          emitir: jest.fn().mockRejectedValue(emitError),
+        },
+      });
+
+      await expect(
+        service.confirmAndSubmit('+593993908744', 'corr-1', {
+          comprador: {},
+          detalles: [
+            {
+              idCliente: 'item-1',
+              selectedCandidateId: ps5Candidate.id,
+              cantidad: 1,
+            },
+          ],
+        }),
+      ).rejects.toThrow(emitError);
+
+      expect(pendingEmissionStore.set).not.toHaveBeenCalled();
       expect(applyEvent).toHaveBeenCalledWith('+593993908744', {
         type: 'WEBHOOK_RECEIVED',
       });

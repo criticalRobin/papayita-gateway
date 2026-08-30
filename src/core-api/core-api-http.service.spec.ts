@@ -197,4 +197,44 @@ describe('CoreApiHttpService', () => {
       ).rejects.toMatchObject({ status: 404 });
     });
   });
+
+  describe('getBinary', () => {
+    const token = 'access-1' as import('./core-api-token').CoreApiUserToken;
+
+    it('sends a bearer-authorized GET with arraybuffer response type and returns a Buffer', async () => {
+      const get = jest
+        .fn()
+        .mockReturnValueOnce(
+          of({ data: Buffer.from('pdf-bytes') as unknown as ArrayBuffer }),
+        );
+      const httpService = { get } as unknown as HttpService;
+      const service = new CoreApiHttpService(httpService, config);
+
+      const result = await service.getBinary(
+        '/sri/comprobante/clave-1/ride',
+        token,
+      );
+
+      expect(get).toHaveBeenCalledWith(
+        'https://core-api.test/sri/comprobante/clave-1/ride',
+        {
+          headers: { Authorization: 'Bearer access-1' },
+          responseType: 'arraybuffer',
+        },
+      );
+      expect(result.toString()).toBe('pdf-bytes');
+    });
+
+    it('maps a 404 to a TerminalCoreApiError carrying the status', async () => {
+      const get = jest
+        .fn()
+        .mockReturnValueOnce(throwError(() => axiosError(404)));
+      const httpService = { get } as unknown as HttpService;
+      const service = new CoreApiHttpService(httpService, config);
+
+      await expect(
+        service.getBinary('/sri/comprobante/clave-1/ride', token),
+      ).rejects.toMatchObject({ status: 404 });
+    });
+  });
 });

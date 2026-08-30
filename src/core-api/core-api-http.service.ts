@@ -84,6 +84,20 @@ export class CoreApiHttpService implements CoreApiClient {
     }
   }
 
+  async getBinary(path: string, token: CoreApiUserToken): Promise<Buffer> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(`${this.baseUrl}${path}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'arraybuffer',
+        }),
+      );
+      return Buffer.from(response.data as ArrayBuffer);
+    } catch (error) {
+      throw this.mapError(error, `GET ${path}`);
+    }
+  }
+
   private toTokenSet(data: LoginResponse): CoreApiTokenSet {
     return {
       accessToken: data.accessToken as CoreApiUserToken,

@@ -3,6 +3,10 @@
 /node_modules
 /build
 
+# local classification model cache (downloaded by @xenova/transformers; baked into
+# the Docker image separately via scripts/prewarm-model.js, never committed)
+/.cache
+
 # Logs
 logs
 *.log

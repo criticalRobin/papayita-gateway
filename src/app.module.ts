@@ -8,6 +8,10 @@ import { WhatsappClientModule } from './whatsapp/client/whatsapp.module';
 import { WebhookModule } from './whatsapp/webhook/webhook.module';
 import { CoreApiWebhookModule } from './core-api/webhook/core-api-webhook.module';
 import { ExtractionModule } from './extraction/extraction.module';
+import { InventoryCategoryModule } from './inventory-category/inventory-category.module';
+import { InventoryProductModule } from './inventory-product/inventory-product.module';
+import { TaxCatalogModule } from './tax-catalog/tax-catalog.module';
+import { InventoryWebviewAuthModule } from './inventory-webview-auth/inventory-webview-auth.module';
 
 @Module({
   imports: [
@@ -17,6 +21,10 @@ import { ExtractionModule } from './extraction/extraction.module';
     WebhookModule,
     CoreApiWebhookModule,
     ExtractionModule,
+    InventoryCategoryModule,
+    InventoryProductModule,
+    TaxCatalogModule,
+    InventoryWebviewAuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

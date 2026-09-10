@@ -50,6 +50,30 @@ export class WebviewAuthService {
     return this.redis.get(this.loginKey(code));
   }
 
+  // "administrar productos" CTA: scoped to one phone, single-use, same shape
+  // as the login code. Deliberately does not look up emisorId or mint a
+  // session here — that needs AuthService, and this module is already
+  // imported by AuthModule, so injecting AuthService here would close a
+  // circular dependency. That lookup happens in
+  // inventory-webview-auth/inventory-auth-exchange.controller.ts instead,
+  // same reasoning as auth-exchange.controller.ts.
+  async mintInventoryCode(phoneNumber: string): Promise<string> {
+    const code = randomUUID();
+    const ttl = this.config.get<number>('LOGIN_CODE_TTL_SECONDS', 900);
+    await this.redis.set(this.inventoryKey(code), phoneNumber, 'EX', ttl);
+    return code;
+  }
+
+  async consumeInventoryCode(code: string): Promise<string | null> {
+    const phoneNumber = await this.redis.get(this.inventoryKey(code));
+    if (!phoneNumber) return null;
+    await this.redis.del(this.inventoryKey(code));
+    this.logger.log(
+      `inventory code consumed for phone=${maskTail(phoneNumber)}`,
+    );
+    return phoneNumber;
+  }
+
   // Draft-confirmation CTA: scoped to one phone + correlationId, single-use,
   // same TTL as the conversation-state record it points to.
   async mintExchangeCode(
@@ -92,6 +116,10 @@ export class WebviewAuthService {
 
   private loginKey(code: string): string {
     return `webview-login:${code}`;
+  }
+
+  private inventoryKey(code: string): string {
+    return `webview-inventory:${code}`;
   }
 
   private exchangeKey(code: string): string {

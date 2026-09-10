@@ -125,4 +125,48 @@ describe('WebviewAuthService', () => {
       expect(result).toBeNull();
     });
   });
+
+  describe('inventory codes', () => {
+    it('mints a code that resolves back to the phone number once', async () => {
+      const redis = makeRedis();
+      const service = new WebviewAuthService(
+        redis,
+        makeConfig(),
+        makeWebviewSessionService(),
+      );
+
+      const code = await service.mintInventoryCode('5219999999999');
+      const phoneNumber = await service.consumeInventoryCode(code);
+
+      expect(phoneNumber).toBe('5219999999999');
+    });
+
+    it('is single-use — a second consume of the same code returns null', async () => {
+      const redis = makeRedis();
+      const service = new WebviewAuthService(
+        redis,
+        makeConfig(),
+        makeWebviewSessionService(),
+      );
+
+      const code = await service.mintInventoryCode('5219999999999');
+      await service.consumeInventoryCode(code);
+      const secondAttempt = await service.consumeInventoryCode(code);
+
+      expect(secondAttempt).toBeNull();
+    });
+
+    it('returns null for an unknown code', async () => {
+      const redis = makeRedis();
+      const service = new WebviewAuthService(
+        redis,
+        makeConfig(),
+        makeWebviewSessionService(),
+      );
+
+      const result = await service.consumeInventoryCode('does-not-exist');
+
+      expect(result).toBeNull();
+    });
+  });
 });

@@ -35,6 +35,8 @@ const OUT_OF_CONTEXT_REPLY =
   'No pudimos entender tu mensaje. Si quieres emitir una factura, cuéntame los datos de la venta.';
 const NOT_AUTHENTICATED_REPLY =
   'Para emitir facturas primero debes vincular tu cuenta. Escribe "iniciar sesión" para continuar.';
+const LOGOUT_SUCCESS_REPLY =
+  'Cerraste tu sesión correctamente. Escribe "iniciar sesión" cuando quieras volver a vincular tu cuenta.';
 const LOGIN_CTA_BODY = 'Vincula tu cuenta para emitir facturas por WhatsApp.';
 const LOGIN_CTA_BUTTON = 'Iniciar sesión';
 const DRAFT_CTA_BODY =
@@ -55,6 +57,16 @@ function isLoginCommand(text: string | undefined): boolean {
     .trim()
     .toLowerCase();
   return normalized === 'iniciar sesion' || normalized === 'login';
+}
+
+function isLogoutCommand(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase();
+  return normalized === 'cerrar sesion' || normalized === 'logout';
 }
 
 function isManageInventoryCommand(text: string | undefined): boolean {
@@ -101,6 +113,14 @@ export class WhatsappInboundProcessor extends WorkerHost {
     const { phoneNumber, type, text, mediaId, whatsappMessageId } = job.data;
     this.logger.log(`processing ${type} message, job ${job.id}`);
     await this.whatsappClient.markAsRead(whatsappMessageId);
+
+    // "cerrar sesión" runs before the auth gate and independent of it —
+    // always the exact same confirmation whether or not the phone was
+    // authenticated, never NOT_AUTHENTICATED_REPLY/login-CTA. No LLM cost.
+    if (type === InboundMessageType.TEXT && isLogoutCommand(text)) {
+      await this.handleLogoutCommand(phoneNumber, job.id);
+      return;
+    }
 
     // Auth gate runs before anything else — no STT/classification/LLM cost is
     // spent while the phone isn't authenticated. See project-info.md's
@@ -178,6 +198,21 @@ export class WhatsappInboundProcessor extends WorkerHost {
         INVENTORY_CTA_BUTTON,
         `${webviewBaseUrl}/inventory?code=${code}`,
       ),
+    );
+  }
+
+  // "cerrar sesión": always the same confirmation, one plain text message,
+  // no CTA, no LLM. Clears both the Core API token cache and any in-flight
+  // conversation state so stale mid-billing-flow state doesn't survive a
+  // logout. Purely local Redis cleanup — never calls the Core API.
+  private async handleLogoutCommand(
+    phoneNumber: string,
+    jobId: string | number | undefined,
+  ): Promise<void> {
+    await this.authService.logout(phoneNumber);
+    await this.conversationStateService.reset(phoneNumber);
+    await this.sendOrLogTerminal(jobId, () =>
+      this.whatsappClient.sendTextMessage(phoneNumber, LOGOUT_SUCCESS_REPLY),
     );
   }
 

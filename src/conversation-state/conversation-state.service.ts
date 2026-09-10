@@ -40,6 +40,14 @@ export class ConversationStateService {
     return next;
   }
 
+  // Unconditional reset to idle for "cerrar sesión" — deleting the key is
+  // equivalent to idle since load() already defaults to createIdleRecord()
+  // when the key is absent. Idempotent: safe when nothing was set.
+  async reset(phoneNumber: string): Promise<void> {
+    await this.redis.del(this.key(phoneNumber));
+    this.logger.log(`state: reset -> idle (phone=${maskTail(phoneNumber)})`);
+  }
+
   private key(phoneNumber: string): string {
     return `conversation:${phoneNumber}`;
   }

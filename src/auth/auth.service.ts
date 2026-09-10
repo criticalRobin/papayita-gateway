@@ -67,6 +67,14 @@ export class AuthService {
     this.logger.log(`phone=${maskTail(phoneNumber)} authenticated`);
   }
 
+  // "cerrar sesión": local, idempotent cleanup only — never calls the Core
+  // API. del() on a nonexistent key resolves without error, so this is safe
+  // to call whether or not the phone was ever authenticated.
+  async logout(phoneNumber: string): Promise<void> {
+    await this.redis.del(this.key(phoneNumber));
+    this.logger.log(`phone=${maskTail(phoneNumber)} logged out`);
+  }
+
   // Static per account (doesn't change on refresh) — read straight from the
   // cached record, no expiry/refresh dance needed. Returns null only if the
   // phone was never logged in.

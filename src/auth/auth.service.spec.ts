@@ -172,6 +172,36 @@ describe('AuthService', () => {
     ).toBe('emisor-1');
   });
 
+  describe('logout', () => {
+    it('deletes the cached auth record', async () => {
+      const store = new Map<string, string>([
+        [
+          `auth:${phoneNumber}`,
+          JSON.stringify({
+            accessToken: 'access-1',
+            refreshToken: 'refresh-1',
+            expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+            emisorId: 'emisor-1',
+          }),
+        ],
+      ]);
+      const redis = makeRedis(store);
+      const service = new AuthService({} as unknown as CoreApiClient, redis);
+
+      await service.logout(phoneNumber);
+
+      expect(store.has(`auth:${phoneNumber}`)).toBe(false);
+    });
+
+    it('is a no-op when the phone was never logged in', async () => {
+      const store = new Map<string, string>();
+      const redis = makeRedis(store);
+      const service = new AuthService({} as unknown as CoreApiClient, redis);
+
+      await expect(service.logout(phoneNumber)).resolves.toBeUndefined();
+    });
+  });
+
   describe('getEmisorId', () => {
     it('returns null when the phone has never logged in', async () => {
       const store = new Map<string, string>();

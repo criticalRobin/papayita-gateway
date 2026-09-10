@@ -57,6 +57,8 @@ describe('WhatsappInboundProcessor', () => {
   let getState: jest.Mock;
   let extract: jest.Mock;
   let getValidToken: jest.Mock;
+  let logout: jest.Mock;
+  let reset: jest.Mock;
   let mintLoginCode: jest.Mock;
   let mintExchangeCode: jest.Mock;
   let mintInventoryCode: jest.Mock;
@@ -89,6 +91,8 @@ describe('WhatsappInboundProcessor', () => {
     getState = jest.fn().mockResolvedValue(createIdleRecord());
     extract = jest.fn().mockResolvedValue(extractedBillingAttempt);
     getValidToken = jest.fn().mockResolvedValue('valid-token');
+    logout = jest.fn().mockResolvedValue(undefined);
+    reset = jest.fn().mockResolvedValue(undefined);
     mintLoginCode = jest.fn().mockResolvedValue('login-code-1');
     mintExchangeCode = jest.fn().mockResolvedValue('exchange-code-1');
     mintInventoryCode = jest.fn().mockResolvedValue('inventory-code-1');
@@ -101,8 +105,9 @@ describe('WhatsappInboundProcessor', () => {
     classificationService = { classify } as unknown as ClassificationService;
     conversationStateService = {
       getState,
+      reset,
     } as unknown as ConversationStateService;
-    authService = { getValidToken } as unknown as AuthService;
+    authService = { getValidToken, logout } as unknown as AuthService;
     webviewAuthService = {
       mintLoginCode,
       mintExchangeCode,
@@ -216,6 +221,77 @@ describe('WhatsappInboundProcessor', () => {
         '5219999999999',
         expect.stringContaining('asistente de facturación'),
       );
+    });
+  });
+
+  describe('cerrar sesión', () => {
+    it('logs out, resets conversation state, and sends the confirmation when authenticated', async () => {
+      getValidToken.mockResolvedValue('valid-token');
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.logout',
+        type: InboundMessageType.TEXT,
+        text: 'cerrar sesion',
+      });
+
+      await processor.process(job);
+
+      expect(logout).toHaveBeenCalledWith('5219999999999');
+      expect(reset).toHaveBeenCalledWith('5219999999999');
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('Cerraste tu sesión'),
+      );
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(getValidToken).not.toHaveBeenCalled();
+    });
+
+    it('sends the same confirmation when the phone was never authenticated', async () => {
+      getValidToken.mockResolvedValue(null);
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.logout-unauth',
+        type: InboundMessageType.TEXT,
+        text: 'cerrar sesion',
+      });
+
+      await processor.process(job);
+
+      expect(logout).toHaveBeenCalledWith('5219999999999');
+      expect(reset).toHaveBeenCalledWith('5219999999999');
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('Cerraste tu sesión'),
+      );
+      expect(getValidToken).not.toHaveBeenCalled();
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+    });
+
+    it('recognizes the command without accents and case-insensitively', async () => {
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.logout-noaccent',
+        type: InboundMessageType.TEXT,
+        text: 'CERRAR SESION',
+      });
+
+      await processor.process(job);
+
+      expect(logout).toHaveBeenCalledWith('5219999999999');
+    });
+
+    it('sends exactly one message total (message-budget guard)', async () => {
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.logout-budget',
+        type: InboundMessageType.TEXT,
+        text: 'cerrar sesion',
+      });
+
+      await processor.process(job);
+
+      expect(sendTextMessage).toHaveBeenCalledTimes(1);
+      expect(sendCtaMessage).not.toHaveBeenCalled();
     });
   });
 

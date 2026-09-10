@@ -23,7 +23,9 @@ function makeConfig(): ConfigService {
   return { get: () => 86400 } as unknown as ConfigService;
 }
 
-function makeCategory(overrides: Partial<InventoryCategory> = {}): InventoryCategory {
+function makeCategory(
+  overrides: Partial<InventoryCategory> = {},
+): InventoryCategory {
   return {
     id: 'cat-1',
     emisorId: EMISOR_ID,

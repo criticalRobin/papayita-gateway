@@ -23,7 +23,10 @@ describe('InventoryProductController', () => {
   it('findAll() resolves the token and delegates with the session emisorId', async () => {
     const findAll = jest.fn().mockResolvedValue([]);
     const client = { findAll } as unknown as InventoryProductClient;
-    const controller = new InventoryProductController(client, makeAuthService());
+    const controller = new InventoryProductController(
+      client,
+      makeAuthService(),
+    );
 
     await controller.findAll(makeRequest());
 
@@ -33,7 +36,10 @@ describe('InventoryProductController', () => {
   it('create() forwards the dto with the session emisorId', async () => {
     const create = jest.fn().mockResolvedValue({});
     const client = { create } as unknown as InventoryProductClient;
-    const controller = new InventoryProductController(client, makeAuthService());
+    const controller = new InventoryProductController(
+      client,
+      makeAuthService(),
+    );
     const dto = { nombre: 'Producto' } as any;
 
     await controller.create(makeRequest(), dto);

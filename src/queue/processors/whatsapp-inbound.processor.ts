@@ -42,6 +42,8 @@ const DRAFT_CTA_BODY =
 const DRAFT_CTA_BUTTON = 'Ver borrador';
 const BILLING_FAILURE_REPLY =
   'No pudimos procesar tu solicitud de facturación, por favor intenta de nuevo.';
+const INVENTORY_CTA_BODY = 'Administra tus categorías y productos desde aquí:';
+const INVENTORY_CTA_BUTTON = 'Administrar productos';
 
 // Accent-insensitive: typing "sesion" without the tilde on a phone keyboard
 // is common. "login" is accepted as a plain-English fallback.
@@ -53,6 +55,19 @@ function isLoginCommand(text: string | undefined): boolean {
     .trim()
     .toLowerCase();
   return normalized === 'iniciar sesion' || normalized === 'login';
+}
+
+function isManageInventoryCommand(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase();
+  return (
+    normalized === 'administrar productos' ||
+    normalized === 'administrar inventario'
+  );
 }
 
 // buildReply()/buildClassifiedReply()/buildAudioReply() return one of these:
@@ -96,6 +111,14 @@ export class WhatsappInboundProcessor extends WorkerHost {
       return;
     }
 
+    // Hardcoded command, checked before classification — no LLM cost, and
+    // this isn't a billing interaction so it must never be routed through
+    // buildClassifiedReply's billing_attempt path.
+    if (type === InboundMessageType.TEXT && isManageInventoryCommand(text)) {
+      await this.handleManageInventoryCommand(phoneNumber, job.id);
+      return;
+    }
+
     const outcome = await this.buildReply(
       phoneNumber,
       type,
@@ -117,7 +140,10 @@ export class WhatsappInboundProcessor extends WorkerHost {
     text: string | undefined,
     jobId: string | number | undefined,
   ): Promise<void> {
-    if (type === InboundMessageType.TEXT && isLoginCommand(text)) {
+    if (
+      type === InboundMessageType.TEXT &&
+      (isLoginCommand(text) || isManageInventoryCommand(text))
+    ) {
       const code = await this.webviewAuthService.mintLoginCode(phoneNumber);
       const webviewBaseUrl = this.config.getOrThrow<string>('WEBVIEW_BASE_URL');
       await this.sendOrLogTerminal(jobId, () =>
@@ -133,6 +159,25 @@ export class WhatsappInboundProcessor extends WorkerHost {
 
     await this.sendOrLogTerminal(jobId, () =>
       this.whatsappClient.sendTextMessage(phoneNumber, NOT_AUTHENTICATED_REPLY),
+    );
+  }
+
+  // "administrar productos"/"administrar inventario" from an authenticated
+  // phone: one CTA message, no LLM call, not part of the invoice 2-message
+  // budget (this isn't a billing interaction).
+  private async handleManageInventoryCommand(
+    phoneNumber: string,
+    jobId: string | number | undefined,
+  ): Promise<void> {
+    const code = await this.webviewAuthService.mintInventoryCode(phoneNumber);
+    const webviewBaseUrl = this.config.getOrThrow<string>('WEBVIEW_BASE_URL');
+    await this.sendOrLogTerminal(jobId, () =>
+      this.whatsappClient.sendCtaMessage(
+        phoneNumber,
+        INVENTORY_CTA_BODY,
+        INVENTORY_CTA_BUTTON,
+        `${webviewBaseUrl}/inventory?code=${code}`,
+      ),
     );
   }
 

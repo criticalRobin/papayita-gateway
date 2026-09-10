@@ -59,6 +59,7 @@ describe('WhatsappInboundProcessor', () => {
   let getValidToken: jest.Mock;
   let mintLoginCode: jest.Mock;
   let mintExchangeCode: jest.Mock;
+  let mintInventoryCode: jest.Mock;
   let buildDraft: jest.Mock;
   let client: WhatsappClient;
   let sttClient: SttClient;
@@ -90,6 +91,7 @@ describe('WhatsappInboundProcessor', () => {
     getValidToken = jest.fn().mockResolvedValue('valid-token');
     mintLoginCode = jest.fn().mockResolvedValue('login-code-1');
     mintExchangeCode = jest.fn().mockResolvedValue('exchange-code-1');
+    mintInventoryCode = jest.fn().mockResolvedValue('inventory-code-1');
     buildDraft = jest
       .fn()
       .mockResolvedValue({ correlationId: 'corr-1', draft: {} });
@@ -104,6 +106,7 @@ describe('WhatsappInboundProcessor', () => {
     webviewAuthService = {
       mintLoginCode,
       mintExchangeCode,
+      mintInventoryCode,
     } as unknown as WebviewAuthService;
     draftBuilderService = { buildDraft } as unknown as DraftBuilderService;
     config = {
@@ -212,6 +215,66 @@ describe('WhatsappInboundProcessor', () => {
       expect(sendTextMessage).toHaveBeenCalledWith(
         '5219999999999',
         expect.stringContaining('asistente de facturación'),
+      );
+    });
+  });
+
+  describe('administrar productos', () => {
+    it('mints an inventory code and sends a CTA, skipping classification, when authenticated', async () => {
+      getValidToken.mockResolvedValue('valid-token');
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.inventory',
+        type: InboundMessageType.TEXT,
+        text: 'administrar productos',
+      });
+
+      await processor.process(job);
+
+      expect(mintInventoryCode).toHaveBeenCalledWith('5219999999999');
+      expect(sendCtaMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.any(String),
+        expect.any(String),
+        'https://webview.test/inventory?code=inventory-code-1',
+      );
+      expect(classify).not.toHaveBeenCalled();
+      expect(sendTextMessage).not.toHaveBeenCalled();
+    });
+
+    it('recognizes "administrar inventario" as an alias', async () => {
+      getValidToken.mockResolvedValue('valid-token');
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.inventory-alias',
+        type: InboundMessageType.TEXT,
+        text: 'Administrar Inventario',
+      });
+
+      await processor.process(job);
+
+      expect(mintInventoryCode).toHaveBeenCalled();
+      expect(sendCtaMessage).toHaveBeenCalled();
+    });
+
+    it('redirects to the login CTA when unauthenticated', async () => {
+      getValidToken.mockResolvedValue(null);
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.inventory-unauth',
+        type: InboundMessageType.TEXT,
+        text: 'administrar productos',
+      });
+
+      await processor.process(job);
+
+      expect(mintInventoryCode).not.toHaveBeenCalled();
+      expect(mintLoginCode).toHaveBeenCalledWith('5219999999999');
+      expect(sendCtaMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.any(String),
+        expect.any(String),
+        'https://webview.test/login?code=login-code-1',
       );
     });
   });

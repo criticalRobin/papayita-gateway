@@ -13,7 +13,7 @@ export class DraftBuilderController {
   async getDraft(@Req() req: RequestWithWebviewSession) {
     return this.draftBuilderService.getDraft(
       req.webviewSession.phoneNumber,
-      req.webviewSession.correlationId,
+      req.webviewSession.correlationId!,
     );
   }
 
@@ -24,7 +24,7 @@ export class DraftBuilderController {
   ) {
     await this.draftBuilderService.confirmAndSubmit(
       req.webviewSession.phoneNumber,
-      req.webviewSession.correlationId,
+      req.webviewSession.correlationId!,
       dto,
     );
     // Matches the documented frontend contract exactly — the assembled

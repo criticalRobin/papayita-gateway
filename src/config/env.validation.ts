@@ -48,6 +48,20 @@ export const envSchema = z.object({
     .int()
     .positive()
     .default(3600),
+
+  // Categories + products, 24h safety-net TTL — refreshed on every write
+  // regardless, this only matters if a cache entry is never written to.
+  INVENTORY_CACHE_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(86400),
+  // SRI's fixed catalog, 7d — no write path ever refreshes it early.
+  TAX_CATALOG_CACHE_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(604800),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

@@ -6,9 +6,12 @@ import { WebviewSessionToken } from './webview-session-token';
 
 export const WEBVIEW_SESSION_REDIS_CLIENT = 'WEBVIEW_SESSION_REDIS_CLIENT';
 
+// correlationId is set for billing-draft sessions; emisorId is set for
+// inventory-management sessions. A given session only ever populates one.
 export interface WebviewSessionPayload {
   phoneNumber: string;
-  correlationId: string;
+  correlationId?: string;
+  emisorId?: string;
 }
 
 // Owns only the session token — no knowledge of drafts or exchange codes.

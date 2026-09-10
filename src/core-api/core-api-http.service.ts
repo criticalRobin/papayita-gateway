@@ -71,6 +71,36 @@ export class CoreApiHttpService implements CoreApiClient {
     }
   }
 
+  async update<T>(
+    path: string,
+    token: CoreApiUserToken,
+    body: unknown,
+  ): Promise<T> {
+    try {
+      const { data } = await firstValueFrom(
+        this.httpService.put<T>(`${this.baseUrl}${path}`, body, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      );
+      return data;
+    } catch (error) {
+      throw this.mapError(error, `PUT ${path}`);
+    }
+  }
+
+  async delete<T>(path: string, token: CoreApiUserToken): Promise<T> {
+    try {
+      const { data } = await firstValueFrom(
+        this.httpService.delete<T>(`${this.baseUrl}${path}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      );
+      return data;
+    } catch (error) {
+      throw this.mapError(error, `DELETE ${path}`);
+    }
+  }
+
   async get<T>(path: string, token: CoreApiUserToken): Promise<T> {
     try {
       const { data } = await firstValueFrom(

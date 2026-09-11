@@ -45,7 +45,7 @@ const DRAFT_CTA_BUTTON = 'Ver borrador';
 const BILLING_FAILURE_REPLY =
   'No pudimos procesar tu solicitud de facturación, por favor intenta de nuevo.';
 const INVENTORY_CTA_BODY = 'Administra tus categorías y productos desde aquí:';
-const INVENTORY_CTA_BUTTON = 'Administrar productos';
+const INVENTORY_CTA_BUTTON = 'Ver inventario';
 
 // Accent-insensitive: typing "sesion" without the tilde on a phone keyboard
 // is common. "login" is accepted as a plain-English fallback.

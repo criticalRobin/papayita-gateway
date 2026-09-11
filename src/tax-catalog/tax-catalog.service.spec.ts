@@ -26,7 +26,9 @@ const impuestos: Impuesto[] = [
   {
     codigo: '2',
     nombre: 'IVA',
-    tarifas: [{ codigoPorcentaje: '2', descripcion: 'IVA 12%', porcentaje: 12 }],
+    tarifas: [
+      { codigoPorcentaje: '2', descripcion: 'IVA 12%', porcentaje: 12 },
+    ],
   },
 ];
 

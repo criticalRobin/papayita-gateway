@@ -3,7 +3,11 @@ import { ConversationStateService } from './conversation-state.service';
 import { createIdleRecord } from './domain/state-machine';
 
 function makeRedis() {
-  return { get: jest.fn(), set: jest.fn().mockResolvedValue('OK') };
+  return {
+    get: jest.fn(),
+    set: jest.fn().mockResolvedValue('OK'),
+    del: jest.fn().mockResolvedValue(1),
+  };
 }
 
 function makeConfig(ttl = 900) {
@@ -77,5 +81,33 @@ describe('ConversationStateService', () => {
     expect(logSpy).toHaveBeenCalledWith(
       expect.stringContaining('idle -> awaiting_webview_action'),
     );
+  });
+
+  describe('reset', () => {
+    it('deletes the phone record', async () => {
+      const redis = makeRedis();
+      const service = new ConversationStateService(
+        redis as never,
+        makeConfig(),
+      );
+
+      await service.reset('5219999999999');
+
+      expect(redis.del).toHaveBeenCalledWith('conversation:5219999999999');
+    });
+
+    it('leaves the phone back at idle afterward', async () => {
+      const redis = makeRedis();
+      const service = new ConversationStateService(
+        redis as never,
+        makeConfig(),
+      );
+
+      await service.reset('5219999999999');
+      redis.get.mockResolvedValue(null);
+      const state = await service.getState('5219999999999');
+
+      expect(state.state).toBe('idle');
+    });
   });
 });

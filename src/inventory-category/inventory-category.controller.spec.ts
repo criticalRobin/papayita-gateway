@@ -13,7 +13,9 @@ function makeRequest(): RequestWithWebviewSession {
   } as RequestWithWebviewSession;
 }
 
-function makeAuthService(getValidToken = jest.fn().mockResolvedValue(TOKEN)): AuthService {
+function makeAuthService(
+  getValidToken = jest.fn().mockResolvedValue(TOKEN),
+): AuthService {
   return { getValidToken } as unknown as AuthService;
 }
 

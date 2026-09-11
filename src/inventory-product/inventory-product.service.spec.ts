@@ -3,7 +3,10 @@ import type { ConfigService } from '@nestjs/config';
 import type { Redis } from 'ioredis';
 import { InventoryProductService } from './inventory-product.service';
 import { TipoProducto } from './domain/inventory-product';
-import type { InventoryProduct, InventoryProductPage } from './domain/inventory-product';
+import type {
+  InventoryProduct,
+  InventoryProductPage,
+} from './domain/inventory-product';
 import type { CoreApiClient } from '../core-api/core-api-client.interface';
 import type { CoreApiUserToken } from '../core-api/core-api-token';
 import type { InventoryCategoryClient } from '../inventory-category/inventory-category-client.interface';
@@ -30,7 +33,9 @@ function makeConfig(): ConfigService {
   return { get: () => 86400 } as unknown as ConfigService;
 }
 
-function makeProduct(overrides: Partial<InventoryProduct> = {}): InventoryProduct {
+function makeProduct(
+  overrides: Partial<InventoryProduct> = {},
+): InventoryProduct {
   return {
     id: 'prod-1',
     emisorId: EMISOR_ID,
@@ -65,7 +70,9 @@ const validImpuestos: Impuesto[] = [
   {
     codigo: '2',
     nombre: 'IVA',
-    tarifas: [{ codigoPorcentaje: '2', descripcion: 'IVA 12%', porcentaje: 12 }],
+    tarifas: [
+      { codigoPorcentaje: '2', descripcion: 'IVA 12%', porcentaje: 12 },
+    ],
   },
 ];
 
@@ -81,7 +88,7 @@ function makeDto(
     codigoPorcentajeIva: '2',
     aplicaIce: false,
     ...overrides,
-  } as CreateOrUpdateInventoryProductDto;
+  };
 }
 
 function makeService(overrides?: {
@@ -95,9 +102,11 @@ function makeService(overrides?: {
   const redis = makeRedis();
   const get =
     overrides?.get ??
-    jest
-      .fn()
-      .mockResolvedValue({ data: [], nextCursor: null, hasMore: false } as InventoryProductPage);
+    jest.fn().mockResolvedValue({
+      data: [],
+      nextCursor: null,
+      hasMore: false,
+    });
   const coreApiClient = {
     get,
     post: overrides?.post ?? jest.fn(),
@@ -113,7 +122,9 @@ function makeService(overrides?: {
   const findAllTaxes = jest
     .fn()
     .mockResolvedValue(overrides?.impuestos ?? validImpuestos);
-  const taxCatalogClient = { findAll: findAllTaxes } as unknown as TaxCatalogClient;
+  const taxCatalogClient = {
+    findAll: findAllTaxes,
+  } as unknown as TaxCatalogClient;
 
   const service = new InventoryProductService(
     coreApiClient,
@@ -123,7 +134,14 @@ function makeService(overrides?: {
     makeConfig(),
   );
 
-  return { service, redis, coreApiClient, findAllCategories, findAllTaxes, get };
+  return {
+    service,
+    redis,
+    coreApiClient,
+    findAllCategories,
+    findAllTaxes,
+    get,
+  };
 }
 
 describe('InventoryProductService', () => {
@@ -139,7 +157,10 @@ describe('InventoryProductService', () => {
         nextCursor: null,
         hasMore: false,
       };
-      const get = jest.fn().mockResolvedValueOnce(page1).mockResolvedValueOnce(page2);
+      const get = jest
+        .fn()
+        .mockResolvedValueOnce(page1)
+        .mockResolvedValueOnce(page2);
       const { service, redis } = makeService({ get });
 
       const result = await service.findAll(TOKEN, EMISOR_ID);
@@ -147,7 +168,9 @@ describe('InventoryProductService', () => {
       expect(get).toHaveBeenCalledTimes(2);
       expect(result.map((p) => p.id)).toEqual(['p1', 'p2']);
       expect(
-        JSON.parse((await redis.get(`inventory-product:${EMISOR_ID}`)) as string),
+        JSON.parse(
+          (await redis.get(`inventory-product:${EMISOR_ID}`)) as string,
+        ),
       ).toHaveLength(2);
     });
 
@@ -180,7 +203,11 @@ describe('InventoryProductService', () => {
       const { service } = makeService({ impuestos: [] });
 
       await expect(
-        service.create(TOKEN, EMISOR_ID, makeDto({ codigoPorcentajeIva: '99' })),
+        service.create(
+          TOKEN,
+          EMISOR_ID,
+          makeDto({ codigoPorcentajeIva: '99' }),
+        ),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 

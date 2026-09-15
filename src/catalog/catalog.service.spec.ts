@@ -19,13 +19,15 @@ describe('CatalogService', () => {
     });
     const service = new CatalogService(makeCoreApiClient(post));
 
-    const result = await service.searchBatch(token, '+593993908744', [
-      'play station 5',
-      'funko pop naruto',
-    ]);
+    const result = await service.searchBatch(token, {
+      emisorId: 'emisor-1',
+      whatsapp: '+593993908744',
+      terminos: ['play station 5', 'funko pop naruto'],
+    });
 
     expect(post).toHaveBeenCalledTimes(1);
     expect(post).toHaveBeenCalledWith('/inventario/productos/buscar', token, {
+      emisorId: 'emisor-1',
       whatsapp: '+593993908744',
       termino: ['play station 5', 'funko pop naruto'],
     });
@@ -39,9 +41,14 @@ describe('CatalogService', () => {
     const post = jest.fn().mockResolvedValue({ success: true, data: [] });
     const service = new CatalogService(makeCoreApiClient(post));
 
-    await service.searchBatch(token, '593993908744', ['coca cola']);
+    await service.searchBatch(token, {
+      emisorId: 'emisor-1',
+      whatsapp: '593993908744',
+      terminos: ['coca cola'],
+    });
 
     expect(post).toHaveBeenCalledWith('/inventario/productos/buscar', token, {
+      emisorId: 'emisor-1',
       whatsapp: '+593993908744',
       termino: ['coca cola'],
     });
@@ -51,7 +58,11 @@ describe('CatalogService', () => {
     const post = jest.fn();
     const service = new CatalogService(makeCoreApiClient(post));
 
-    const result = await service.searchBatch(token, '+593993908744', []);
+    const result = await service.searchBatch(token, {
+      emisorId: 'emisor-1',
+      whatsapp: '+593993908744',
+      terminos: [],
+    });
 
     expect(result).toEqual([]);
     expect(post).not.toHaveBeenCalled();
@@ -83,13 +94,16 @@ describe('CatalogService', () => {
       });
       const service = new CatalogService(makeCoreApiClient(post));
 
-      const result = await service.getDetalles(token, '+593993908744', [
-        {
-          productoId: 'c5948014-f491-4eb0-923d-52e03b0413a6',
-          cantidad: 1,
-          descuento: 0,
-        },
-      ]);
+      const result = await service.getDetalles(token, {
+        whatsapp: '+593993908744',
+        items: [
+          {
+            productoId: 'c5948014-f491-4eb0-923d-52e03b0413a6',
+            cantidad: 1,
+            descuento: 0,
+          },
+        ],
+      });
 
       expect(post).toHaveBeenCalledWith(
         '/inventario/productos/detalles',
@@ -114,9 +128,10 @@ describe('CatalogService', () => {
         .mockResolvedValue({ success: true, data: { detalles: [] } });
       const service = new CatalogService(makeCoreApiClient(post));
 
-      await service.getDetalles(token, '593993908744', [
-        { productoId: 'p1', cantidad: 1, descuento: 0 },
-      ]);
+      await service.getDetalles(token, {
+        whatsapp: '593993908744',
+        items: [{ productoId: 'p1', cantidad: 1, descuento: 0 }],
+      });
 
       expect(post).toHaveBeenCalledWith(
         '/inventario/productos/detalles',
@@ -129,7 +144,10 @@ describe('CatalogService', () => {
       const post = jest.fn();
       const service = new CatalogService(makeCoreApiClient(post));
 
-      const result = await service.getDetalles(token, '+593993908744', []);
+      const result = await service.getDetalles(token, {
+        whatsapp: '+593993908744',
+        items: [],
+      });
 
       expect(result).toEqual([]);
       expect(post).not.toHaveBeenCalled();

@@ -632,7 +632,7 @@ describe('WhatsappInboundProcessor', () => {
     expect(markAsRead).toHaveBeenCalledWith('wamid.read');
   });
 
-  it('skips classification and echoes the message when mid-billing-flow', async () => {
+  it('skips classification and sends the busy reply when mid-billing-flow', async () => {
     getState.mockResolvedValue({
       ...createIdleRecord(),
       state: 'awaiting_webview_action',
@@ -649,7 +649,7 @@ describe('WhatsappInboundProcessor', () => {
     expect(classify).not.toHaveBeenCalled();
     expect(sendTextMessage).toHaveBeenCalledWith(
       '5219999999999',
-      'Recibimos tu mensaje: "si esta bien"',
+      'Ya estamos procesando una solicitud, por favor termina de gestionar el mensaje anterior.',
     );
   });
 

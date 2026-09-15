@@ -41,7 +41,11 @@ export class CatalogService implements CatalogSearchClient {
     const response = await this.coreApiClient.post<CatalogSearchResponse>(
       '/inventario/productos/buscar',
       token,
-      cleanBody,
+      {
+        emisorId: cleanBody.emisorId,
+        whatsapp: cleanBody.whatsapp,
+        termino: cleanBody.terminos,
+      },
     );
     return response.data;
   }

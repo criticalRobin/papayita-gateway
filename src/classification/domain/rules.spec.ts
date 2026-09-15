@@ -1,6 +1,8 @@
 import {
   applyRules,
+  extractIdNumber,
   matchBillingAttempt,
+  matchCreditNoteRequest,
   matchGreeting,
   matchTrivialNoise,
   normalize,
@@ -105,7 +107,75 @@ describe('matchBillingAttempt', () => {
   });
 });
 
+describe('matchCreditNoteRequest', () => {
+  it.each([
+    'emite una nota de credito al cliente 1850137918',
+    'necesito una nota de credito para el cliente 1802258721',
+    'nota de crédito para 1850137918001',
+    'nota credito al cliente 1802258721',
+  ])('matches clear credit-note phrasing "%s"', (text) => {
+    expect(matchCreditNoteRequest(normalize(text))).toBe(true);
+  });
+
+  it('requires an id number even with the credit-note stem present', () => {
+    expect(
+      matchCreditNoteRequest(normalize('necesito una nota de credito')),
+    ).toBe(false);
+  });
+
+  it('does not match a plain billing attempt', () => {
+    expect(
+      matchCreditNoteRequest(normalize('factura para el cliente 1850137918')),
+    ).toBe(false);
+  });
+
+  it('wins over the billing stem when both appear in the same message', () => {
+    const text = 'nota de credito de la factura del cliente 1850137918';
+    expect(matchCreditNoteRequest(normalize(text))).toBe(true);
+  });
+
+  it('never matches any seeded billing_attempt phrase', () => {
+    for (const phrase of SEED_PHRASES.billing_attempt) {
+      expect(matchCreditNoteRequest(normalize(phrase))).toBe(false);
+    }
+  });
+
+  // Unlike billing_attempt's seed set, credit_note_request's seeds deliberately
+  // include paraphrases without the literal stem ("devolver", "anular un
+  // producto") — those exist precisely to be caught by embedding fallback
+  // instead of this rule, so no "matches every seeded phrase" assertion here.
+});
+
+describe('extractIdNumber', () => {
+  it('extracts a 10-digit cedula', () => {
+    expect(
+      extractIdNumber(normalize('nota de credito al cliente 1802258721')),
+    ).toBe('1802258721');
+  });
+
+  it('extracts a 13-digit ruc', () => {
+    expect(
+      extractIdNumber(normalize('nota de credito al cliente 1850137918001')),
+    ).toBe('1850137918001');
+  });
+
+  it('returns null when no id number is present', () => {
+    expect(
+      extractIdNumber(normalize('necesito una nota de credito')),
+    ).toBeNull();
+  });
+});
+
 describe('applyRules', () => {
+  it('returns credit_note_request for clear credit-note phrasing, taking priority over billing', () => {
+    expect(applyRules('emite una nota de credito al cliente 1850137918')).toBe(
+      'credit_note_request',
+    );
+    expect(
+      applyRules('nota de credito de la factura del cliente 1850137918'),
+    ).toBe('credit_note_request');
+  });
+
   it('returns greeting for a pure salutation', () => {
     expect(applyRules('Hola')).toBe('greeting');
   });

@@ -24,6 +24,7 @@ describe('scoreAgainstCategories', () => {
     greeting: [[1, 0, 0]],
     info_request: [[0, 1, 0]],
     billing_attempt: [[0, 0, 1]],
+    credit_note_request: [],
     out_of_context: [],
   };
 

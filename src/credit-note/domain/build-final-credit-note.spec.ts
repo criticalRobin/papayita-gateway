@@ -49,17 +49,17 @@ const detalle: CreditNoteXmlDetalle = {
 };
 
 describe('buildFinalCreditNote', () => {
-  it('never includes fechaEmision or secuencial', () => {
-    const result = buildFinalCreditNote(xmlData, [detalle], {
+  it('stamps the passed-in fechaEmision and never includes secuencial', () => {
+    const result = buildFinalCreditNote(xmlData, [detalle], '15/09/2026', {
       motivo: 'Devolución de consola',
     });
 
-    expect(result).not.toHaveProperty('fechaEmision');
+    expect(result.fechaEmision).toBe('15/09/2026');
     expect(result).not.toHaveProperty('secuencial');
   });
 
   it('sets dirEstablecimiento to dirMatriz', () => {
-    const result = buildFinalCreditNote(xmlData, [detalle], {
+    const result = buildFinalCreditNote(xmlData, [detalle], '15/09/2026', {
       motivo: 'Devolución de consola',
     });
 
@@ -68,16 +68,24 @@ describe('buildFinalCreditNote', () => {
   });
 
   it('uses the XML comprador/razonSocial by default, overridable from the webview', () => {
-    const defaultResult = buildFinalCreditNote(xmlData, [detalle], {
-      motivo: 'Devolución de consola',
-    });
+    const defaultResult = buildFinalCreditNote(
+      xmlData,
+      [detalle],
+      '15/09/2026',
+      { motivo: 'Devolución de consola' },
+    );
     expect(defaultResult.comprador.razonSocial).toBe('TITE HARO RAMIRO MATIAS');
 
-    const overriddenResult = buildFinalCreditNote(xmlData, [detalle], {
-      motivo: 'Devolución de consola',
-      razonSocial: 'Nombre editado en el webview',
-      comprador: { email: 'cliente@ejemplo.com' },
-    });
+    const overriddenResult = buildFinalCreditNote(
+      xmlData,
+      [detalle],
+      '15/09/2026',
+      {
+        motivo: 'Devolución de consola',
+        razonSocial: 'Nombre editado en el webview',
+        comprador: { email: 'cliente@ejemplo.com' },
+      },
+    );
     expect(overriddenResult.comprador.razonSocial).toBe(
       'Nombre editado en el webview',
     );
@@ -85,7 +93,7 @@ describe('buildFinalCreditNote', () => {
   });
 
   it('carries codDocModificado/numDocModificado/fechaEmisionDocSustento straight from the XML', () => {
-    const result = buildFinalCreditNote(xmlData, [detalle], {
+    const result = buildFinalCreditNote(xmlData, [detalle], '15/09/2026', {
       motivo: 'Devolución de consola',
     });
 
@@ -95,7 +103,7 @@ describe('buildFinalCreditNote', () => {
   });
 
   it('passes the selected detalles through unchanged (money fields already server-sourced)', () => {
-    const result = buildFinalCreditNote(xmlData, [detalle], {
+    const result = buildFinalCreditNote(xmlData, [detalle], '15/09/2026', {
       motivo: 'Devolución de consola',
     });
 

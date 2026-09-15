@@ -12,19 +12,23 @@ export interface BuildFinalCreditNoteOptions {
 }
 
 // Assembles the exact POST /sri/emitir/nota-credito body. Never includes
-// fechaEmision/secuencial — Core API auto-assigns both at submission time,
-// same discipline as draft-builder's FinalInvoice. Every money field on
+// secuencial — Core API auto-assigns it at submission time. fechaEmision is
+// passed in already formatted (dd/mm/yyyy) by the caller, same as
+// draft-builder's buildSkeleton — keeps this function a pure clock-free
+// mapping, no `new Date()` inside domain/. Every money field on
 // `selectedDetalles` must already come from a freshly re-fetched XML (the
 // caller's responsibility, see credit-note.service.ts) — this function never
 // trusts anything the webview submitted for cantidad/precioUnitario/impuestos.
 export function buildFinalCreditNote(
   data: CreditNoteXmlData,
   selectedDetalles: CreditNoteXmlDetalle[],
+  fechaEmision: string,
   options: BuildFinalCreditNoteOptions,
 ): FinalCreditNote {
   return {
     ambiente: data.ambiente,
     tipoEmision: data.tipoEmision,
+    fechaEmision,
     emisor: {
       ruc: data.emisor.ruc,
       razonSocial: data.emisor.razonSocial,

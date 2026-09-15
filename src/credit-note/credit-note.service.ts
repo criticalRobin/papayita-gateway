@@ -15,6 +15,7 @@ import type { PersonaLookupClient } from '../persona/persona-lookup.interface';
 import { ConversationStateService } from '../conversation-state/conversation-state.service';
 import { WHATSAPP_CLIENT } from '../whatsapp/client/whatsapp.module';
 import type { WhatsappClient } from '../whatsapp/client/whatsapp-client.interface';
+import { formatFechaEmision } from '../common/format-date';
 import { CREDIT_NOTE_CLIENT } from './credit-note-client.interface';
 import type { CreditNoteClient } from './credit-note-client.interface';
 import { buildFinalCreditNote } from './domain/build-final-credit-note';
@@ -151,11 +152,16 @@ export class CreditNoteService {
       return detalle;
     });
 
-    const finalCreditNote = buildFinalCreditNote(data, selectedDetalles, {
-      motivo: dto.motivo,
-      razonSocial: dto.razonSocial,
-      comprador: dto.comprador,
-    });
+    const finalCreditNote = buildFinalCreditNote(
+      data,
+      selectedDetalles,
+      formatFechaEmision(new Date()),
+      {
+        motivo: dto.motivo,
+        razonSocial: dto.razonSocial,
+        comprador: dto.comprador,
+      },
+    );
 
     await this.conversationStateService.applyEvent(phoneNumber, {
       type: 'WEBVIEW_CONFIRMED',

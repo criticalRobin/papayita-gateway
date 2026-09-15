@@ -77,12 +77,15 @@ export interface ConfirmCreditNoteComprador {
   email?: string;
 }
 
-// POST /sri/emitir/nota-credito body — no fechaEmision/secuencial keys,
-// ever: Core API assigns both at submission time (same discipline as
-// FinalInvoice in draft-builder/domain/types.ts).
+// POST /sri/emitir/nota-credito body — no secuencial key, ever: Core API
+// assigns it at submission time (same discipline as FinalInvoice in
+// draft-builder/domain/types.ts). fechaEmision IS required here (unlike
+// FinalInvoice) — Core API validates it as dd/mm/yyyy and does not default
+// it, so the gateway stamps the system clock's current date.
 export interface FinalCreditNote {
   ambiente: string;
   tipoEmision: string;
+  fechaEmision: string;
   emisor: {
     ruc: string;
     razonSocial: string;

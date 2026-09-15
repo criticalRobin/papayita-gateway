@@ -10,11 +10,15 @@ export interface PendingEmission {
 }
 
 // Correlates an async comprobante.autorizado/rechazado webhook back to the WhatsApp
-// conversation that triggered it. Core API's emit response has no claveAcceso, and its
-// webhook payload has no jobId/correlationId — only emisorId — so this is keyed by
+// conversation that triggered it. Shared by both facturas (draft-builder) and notas de
+// crédito (credit-note) — InvoiceEmissionProcessor branches on the webhook payload's
+// tipoComprobante to decide wording/filename, but the pending-lookup plumbing is
+// identical for both document types. Core API's emit response has no claveAcceso, and
+// its webhook payload has no jobId/correlationId — only emisorId — so this is keyed by
 // emisorId alone. KNOWN MVP LIMITATION: a second concurrent emission for the same
-// emisorId overwrites the first's pending record before its webhook arrives. Acceptable
-// pre-launch (single emission per business in flight); revisit before scaling traffic.
+// emisorId (factura or nota de crédito) overwrites the first's pending record before its
+// webhook arrives. Acceptable pre-launch — the conversation-state machine already caps
+// one in-flight submission per phone number; revisit before scaling traffic.
 @Injectable()
 export class PendingEmissionStore {
   constructor(

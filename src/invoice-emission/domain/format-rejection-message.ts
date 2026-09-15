@@ -5,9 +5,12 @@ export interface RechazoMensaje {
   tipo: string;
 }
 
-export function formatRejectionMessage(mensajes: RechazoMensaje[]): string {
+export function formatRejectionMessage(
+  mensajes: RechazoMensaje[],
+  documentLabel = 'factura',
+): string {
   const primary =
     mensajes.find((mensaje) => mensaje.tipo === 'ERROR') ?? mensajes[0];
   const detail = primary?.mensaje ?? 'motivo desconocido';
-  return `No pudimos emitir tu factura: ${detail}. Verifica los datos e inténtalo de nuevo.`;
+  return `No pudimos emitir tu ${documentLabel}: ${detail}. Verifica los datos e inténtalo de nuevo.`;
 }

@@ -13,6 +13,7 @@ import { createIdleRecord } from '../../conversation-state/domain/state-machine'
 import type { AuthService } from '../../auth/auth.service';
 import type { WebviewAuthService } from '../../webview-auth/webview-auth.service';
 import type { DraftBuilderService } from '../../draft-builder/draft-builder.service';
+import type { CreditNoteService } from '../../credit-note/credit-note.service';
 import type { LlmClient } from '../../extraction/llm-client.interface';
 import { ExtractionParseError } from '../../extraction/extraction.errors';
 import {
@@ -52,6 +53,8 @@ describe('WhatsappInboundProcessor', () => {
   let sendCtaMessage: jest.Mock;
   let downloadMedia: jest.Mock;
   let markAsRead: jest.Mock;
+  let uploadMedia: jest.Mock;
+  let sendDocumentMessage: jest.Mock;
   let transcribe: jest.Mock;
   let classify: jest.Mock;
   let getState: jest.Mock;
@@ -63,6 +66,7 @@ describe('WhatsappInboundProcessor', () => {
   let mintExchangeCode: jest.Mock;
   let mintInventoryCode: jest.Mock;
   let buildDraft: jest.Mock;
+  let requestByIdentificacion: jest.Mock;
   let client: WhatsappClient;
   let sttClient: SttClient;
   let llmClient: LlmClient;
@@ -71,6 +75,7 @@ describe('WhatsappInboundProcessor', () => {
   let authService: AuthService;
   let webviewAuthService: WebviewAuthService;
   let draftBuilderService: DraftBuilderService;
+  let creditNoteService: CreditNoteService;
   let config: ConfigService;
   let processor: WhatsappInboundProcessor;
 
@@ -82,6 +87,8 @@ describe('WhatsappInboundProcessor', () => {
       mimeType: 'audio/ogg',
     });
     markAsRead = jest.fn().mockResolvedValue(undefined);
+    uploadMedia = jest.fn().mockResolvedValue('media-id-1');
+    sendDocumentMessage = jest.fn().mockResolvedValue(undefined);
     transcribe = jest.fn().mockResolvedValue('quiero facturar dos colas');
     classify = jest.fn().mockResolvedValue({
       category: 'greeting',
@@ -99,7 +106,17 @@ describe('WhatsappInboundProcessor', () => {
     buildDraft = jest
       .fn()
       .mockResolvedValue({ correlationId: 'corr-1', draft: {} });
-    client = { sendTextMessage, sendCtaMessage, downloadMedia, markAsRead };
+    requestByIdentificacion = jest
+      .fn()
+      .mockResolvedValue({ correlationId: 'corr-cn-1', hasCandidates: true });
+    client = {
+      sendTextMessage,
+      sendCtaMessage,
+      downloadMedia,
+      markAsRead,
+      uploadMedia,
+      sendDocumentMessage,
+    };
     sttClient = { transcribe };
     llmClient = { extract };
     classificationService = { classify } as unknown as ClassificationService;
@@ -114,6 +131,9 @@ describe('WhatsappInboundProcessor', () => {
       mintInventoryCode,
     } as unknown as WebviewAuthService;
     draftBuilderService = { buildDraft } as unknown as DraftBuilderService;
+    creditNoteService = {
+      requestByIdentificacion,
+    } as unknown as CreditNoteService;
     config = {
       getOrThrow: () => 'https://webview.test',
     } as unknown as ConfigService;
@@ -126,6 +146,7 @@ describe('WhatsappInboundProcessor', () => {
       authService,
       webviewAuthService,
       draftBuilderService,
+      creditNoteService,
       config,
     );
   });
@@ -486,6 +507,115 @@ describe('WhatsappInboundProcessor', () => {
       );
       expect(sendCtaMessage).not.toHaveBeenCalled();
       expect(sendTextMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('credit-note requests', () => {
+    beforeEach(() => {
+      classify.mockResolvedValue({
+        category: 'credit_note_request',
+        confidence: 1,
+        method: 'rule',
+      });
+    });
+
+    it('extracts the id number, requests candidates, mints an exchange code, and sends exactly one CTA (no text reply)', async () => {
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.credit-note',
+        type: InboundMessageType.TEXT,
+        text: 'emite una nota de credito al cliente 1850137918',
+      });
+
+      await processor.process(job);
+
+      expect(requestByIdentificacion).toHaveBeenCalledWith(
+        '5219999999999',
+        '1850137918',
+      );
+      expect(mintExchangeCode).toHaveBeenCalledWith(
+        '5219999999999',
+        'corr-cn-1',
+      );
+      expect(sendCtaMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.any(String),
+        expect.any(String),
+        'https://webview.test/credit-note?code=exchange-code-1',
+      );
+      expect(sendTextMessage).not.toHaveBeenCalled();
+    });
+
+    it('sends the no-invoices reply (no CTA) when there are no AUTORIZADO candidates', async () => {
+      requestByIdentificacion.mockResolvedValue({
+        correlationId: '',
+        hasCandidates: false,
+      });
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.credit-note-empty',
+        type: InboundMessageType.TEXT,
+        text: 'emite una nota de credito al cliente 1850137918',
+      });
+
+      await processor.process(job);
+
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('facturas autorizadas'),
+      );
+    });
+
+    it('sends the hardcoded failure reply (no CTA) on a terminal Core API error', async () => {
+      requestByIdentificacion.mockRejectedValue(
+        new TerminalCoreApiError('bad request'),
+      );
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.credit-note-terminal',
+        type: InboundMessageType.TEXT,
+        text: 'emite una nota de credito al cliente 1850137918',
+      });
+
+      await processor.process(job);
+
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('nota de crédito'),
+      );
+    });
+
+    it('propagates a retryable Core API error so BullMQ retries the whole job', async () => {
+      requestByIdentificacion.mockRejectedValue(
+        new RetryableCoreApiError('network blip'),
+      );
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.credit-note-retryable',
+        type: InboundMessageType.TEXT,
+        text: 'emite una nota de credito al cliente 1850137918',
+      });
+
+      await expect(processor.process(job)).rejects.toThrow(
+        RetryableCoreApiError,
+      );
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(sendTextMessage).not.toHaveBeenCalled();
+    });
+
+    it('never calls the LLM extractor for a credit-note request', async () => {
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.credit-note-no-llm',
+        type: InboundMessageType.TEXT,
+        text: 'emite una nota de credito al cliente 1850137918',
+      });
+
+      await processor.process(job);
+
+      expect(extract).not.toHaveBeenCalled();
     });
   });
 

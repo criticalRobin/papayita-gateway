@@ -24,7 +24,11 @@ interface MockOverrides {
     get?: jest.Mock;
     clear?: jest.Mock;
   };
-  conversationStateService?: { applyEvent?: jest.Mock; getState?: jest.Mock };
+  conversationStateService?: {
+    applyEvent?: jest.Mock;
+    getState?: jest.Mock;
+    getPendingDocument?: jest.Mock;
+  };
   config?: { getOrThrow?: jest.Mock };
 }
 
@@ -79,9 +83,31 @@ function makeService(overrides: MockOverrides = {}) {
   const applyEvent =
     overrides.conversationStateService?.applyEvent ??
     jest.fn().mockResolvedValue(undefined);
+  const getState = overrides.conversationStateService?.getState ?? jest.fn();
+  // Mirrors the real ConversationStateService.getPendingDocument logic on top
+  // of whatever getState mock the test supplied, so existing tests that only
+  // override getState keep working unchanged.
+  const getPendingDocument =
+    overrides.conversationStateService?.getPendingDocument ??
+    jest.fn(async (phoneNumber: string, correlationId: string) => {
+      const record = (await getState(phoneNumber)) as {
+        correlationId: string | null;
+        state: string;
+        pendingDocument: unknown;
+      } | null;
+      if (
+        !record ||
+        record.correlationId !== correlationId ||
+        record.state !== 'awaiting_webview_action'
+      ) {
+        return null;
+      }
+      return record.pendingDocument;
+    });
   const conversationStateService = {
     applyEvent,
-    getState: jest.fn(),
+    getState,
+    getPendingDocument,
     ...overrides.conversationStateService,
   } as unknown as ConversationStateService;
   const config = {

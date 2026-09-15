@@ -25,6 +25,26 @@ export class ConversationStateService {
     return this.load(phoneNumber);
   }
 
+  // Shared guard for every webview-facing flow that stashed something via
+  // DRAFT_READY (invoice drafts, credit-note candidate lists, ...): returns
+  // the pending document only if the caller's correlationId still matches
+  // and the conversation hasn't moved past awaiting_webview_action (expired,
+  // already confirmed, or never existed). Callers throw their own
+  // domain-appropriate exception on null — the message differs per flow.
+  async getPendingDocument(
+    phoneNumber: string,
+    correlationId: string,
+  ): Promise<unknown> {
+    const record = await this.load(phoneNumber);
+    if (
+      record.correlationId !== correlationId ||
+      record.state !== 'awaiting_webview_action'
+    ) {
+      return null;
+    }
+    return record.pendingDocument;
+  }
+
   async applyEvent(
     phoneNumber: string,
     event: ConversationEvent,

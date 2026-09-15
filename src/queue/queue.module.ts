@@ -12,6 +12,7 @@ import { AuthModule } from '../auth/auth.module';
 import { WebviewAuthModule } from '../webview-auth/webview-auth.module';
 import { DraftBuilderModule } from '../draft-builder/draft-builder.module';
 import { InvoiceEmissionModule } from '../invoice-emission/invoice-emission.module';
+import { CreditNoteModule } from '../credit-note/credit-note.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { InvoiceEmissionModule } from '../invoice-emission/invoice-emission.modu
     WebviewAuthModule,
     DraftBuilderModule,
     InvoiceEmissionModule,
+    CreditNoteModule,
   ],
   providers: [WhatsappInboundProcessor, InvoiceEmissionProcessor],
   exports: [BullModule],

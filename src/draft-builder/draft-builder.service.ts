@@ -109,16 +109,17 @@ export class DraftBuilderService {
   }
 
   async getDraft(phoneNumber: string, correlationId: string): Promise<Draft> {
-    const record = await this.conversationStateService.getState(phoneNumber);
-    if (
-      record.correlationId !== correlationId ||
-      record.state !== 'awaiting_webview_action'
-    ) {
+    const pendingDocument =
+      await this.conversationStateService.getPendingDocument(
+        phoneNumber,
+        correlationId,
+      );
+    if (!pendingDocument) {
       throw new NotFoundException(
         'Este enlace ya no es válido, pídele a tu negocio que envíe la factura de nuevo.',
       );
     }
-    return record.pendingDocument as Draft;
+    return pendingDocument as Draft;
   }
 
   async confirmAndSubmit(

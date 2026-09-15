@@ -37,5 +37,12 @@ export const SEED_PHRASES: Record<IntentCategory, string[]> = {
     'necesito facturar varios articulos a un cliente',
     'genera el comprobante de esta venta a nombre del cliente',
   ],
+  credit_note_request: [
+    'anula parte de la factura del cliente 1850137918',
+    'necesito devolver un producto que le facture a 1802258721',
+    'quiero hacer una devolucion de la venta del cliente 1850137918001',
+    'el cliente 1802258721 quiere devolver un producto que le facture',
+    'necesito anular unos productos de una factura ya emitida al cliente 1850137918',
+  ],
   out_of_context: [],
 };

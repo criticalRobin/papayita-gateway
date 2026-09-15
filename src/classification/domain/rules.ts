@@ -28,6 +28,13 @@ const GREETING_PHRASES = [
 const BILLING_STEM = /factur|comprobante/;
 const ID_NUMBER = /\b\d{10}\b|\b\d{13}\b/;
 
+// Same id-number signal as billing, but for the credit-note stem. Checked
+// before matchBillingAttempt in applyRules() — a message can plausibly
+// mention both "nota de crédito" and "factura" in the same sentence (e.g.
+// "nota de credito de la factura del cliente 1850137918"), and the more
+// specific credit-note phrasing must win.
+const CREDIT_NOTE_STEM = /nota\s+de\s+cr[eé]dito|nota\s+cr[eé]dito/;
+
 // Messages starting with these are asking ABOUT the service (info_request),
 // not asking to perform a billing action right now — even when they mention
 // "factura"/"facturar" ("que documentos necesito para emitir una factura",
@@ -80,6 +87,21 @@ export function matchBillingAttempt(normalized: string): boolean {
   return BILLING_ACTION_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
+// Deliberately narrower than matchBillingAttempt: requires both signals
+// together, no verb-only fallback. A credit note is always issued against a
+// specific customer, so the id number is never optional here.
+export function matchCreditNoteRequest(normalized: string): boolean {
+  return ID_NUMBER.test(normalized) && CREDIT_NOTE_STEM.test(normalized);
+}
+
+// Pulls the customer's cédula/RUC out of already-normalized text — the same
+// signal matchBillingAttempt/matchCreditNoteRequest use to detect an id, but
+// exposed so callers can extract the actual value once intent is known.
+export function extractIdNumber(normalized: string): string | null {
+  const match = normalized.match(ID_NUMBER);
+  return match ? match[0] : null;
+}
+
 const COMBINING_DIACRITICS = /[̀-ͯ]/g;
 
 export function normalize(text: string): string {
@@ -108,6 +130,9 @@ export function applyRules(text: string): IntentCategory | null {
   }
   if (matchTrivialNoise(normalized)) {
     return 'out_of_context';
+  }
+  if (matchCreditNoteRequest(normalized)) {
+    return 'credit_note_request';
   }
   if (matchBillingAttempt(normalized)) {
     return 'billing_attempt';

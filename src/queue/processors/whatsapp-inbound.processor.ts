@@ -9,10 +9,12 @@ import { STT_CLIENT } from '../../stt/stt.module';
 import type { SttClient } from '../../stt/stt-client.interface';
 import { TerminalSttError } from '../../stt/stt.errors';
 import { ClassificationService } from '../../classification/classification.service';
+import { extractIdNumber, normalize } from '../../classification/domain/rules';
 import { ConversationStateService } from '../../conversation-state/conversation-state.service';
 import { AuthService } from '../../auth/auth.service';
 import { WebviewAuthService } from '../../webview-auth/webview-auth.service';
 import { DraftBuilderService } from '../../draft-builder/draft-builder.service';
+import { CreditNoteService } from '../../credit-note/credit-note.service';
 import { ExtractionParseError } from '../../extraction/extraction.errors';
 import { TerminalCoreApiError } from '../../core-api/core-api.errors';
 import {
@@ -46,6 +48,15 @@ const BILLING_FAILURE_REPLY =
   'No pudimos procesar tu solicitud de facturación, por favor intenta de nuevo.';
 const INVENTORY_CTA_BODY = 'Administra tus categorías y productos desde aquí:';
 const INVENTORY_CTA_BUTTON = 'Ver inventario';
+const CREDIT_NOTE_CTA_BODY =
+  'Selecciona la factura y los productos para tu nota de crédito aquí:';
+const CREDIT_NOTE_CTA_BUTTON = 'Ver facturas';
+const CREDIT_NOTE_FAILURE_REPLY =
+  'No pudimos procesar tu solicitud de nota de crédito, por favor intenta de nuevo.';
+const CREDIT_NOTE_NO_INVOICES_REPLY =
+  'No encontramos facturas autorizadas para ese cliente, verifica el número e intenta de nuevo.';
+const CREDIT_NOTE_NO_ID_REPLY =
+  'No pudimos identificar el número de cédula/RUC del cliente, por favor incluye el número completo.';
 
 // Accent-insensitive: typing "sesion" without the tilde on a phone keyboard
 // is common. "login" is accepted as a plain-English fallback.
@@ -104,6 +115,7 @@ export class WhatsappInboundProcessor extends WorkerHost {
     private readonly authService: AuthService,
     private readonly webviewAuthService: WebviewAuthService,
     private readonly draftBuilderService: DraftBuilderService,
+    private readonly creditNoteService: CreditNoteService,
     private readonly config: ConfigService,
   ) {
     super();
@@ -261,7 +273,7 @@ export class WhatsappInboundProcessor extends WorkerHost {
     if (record.state !== 'idle') {
       return {
         kind: 'text',
-        text: `Ya estamos procesando una factura, por favor termina de gestionar el mensaje anterior.`,
+        text: `Ya estamos procesando una solicitud, por favor termina de gestionar el mensaje anterior.`,
       };
     }
 
@@ -273,6 +285,9 @@ export class WhatsappInboundProcessor extends WorkerHost {
         return { kind: 'text', text: INFO_REQUEST_REPLY };
       case 'billing_attempt':
         await this.handleBillingAttempt(phoneNumber, text, jobId);
+        return { kind: 'handled' };
+      case 'credit_note_request':
+        await this.handleCreditNoteRequest(phoneNumber, text, jobId);
         return { kind: 'handled' };
       case 'out_of_context':
         return { kind: 'text', text: OUT_OF_CONTEXT_REPLY };
@@ -320,6 +335,76 @@ export class WhatsappInboundProcessor extends WorkerHost {
           this.whatsappClient.sendTextMessage(
             phoneNumber,
             BILLING_FAILURE_REPLY,
+          ),
+        );
+        return;
+      }
+      throw error; // RetryableCoreApiError / unexpected — propagate so BullMQ retries the whole job
+    }
+  }
+
+  // Credit-note requests get exactly one message too: a CTA linking to the
+  // invoice/item-selection webview (success), or a hardcoded failure text (no
+  // CTA). Unlike billing, no LLM call is involved — the customer id is pulled
+  // via the same regex the classifier used to detect the intent.
+  private async handleCreditNoteRequest(
+    phoneNumber: string,
+    text: string,
+    jobId: string | number | undefined,
+  ): Promise<void> {
+    const identificacion = extractIdNumber(normalize(text));
+    if (!identificacion) {
+      this.logger.error(
+        `credit-note request for job ${jobId} matched intent but no id number extracted`,
+      );
+      await this.sendOrLogTerminal(jobId, () =>
+        this.whatsappClient.sendTextMessage(
+          phoneNumber,
+          CREDIT_NOTE_NO_ID_REPLY,
+        ),
+      );
+      return;
+    }
+
+    try {
+      const { correlationId, hasCandidates } =
+        await this.creditNoteService.requestByIdentificacion(
+          phoneNumber,
+          identificacion,
+        );
+
+      if (!hasCandidates) {
+        await this.sendOrLogTerminal(jobId, () =>
+          this.whatsappClient.sendTextMessage(
+            phoneNumber,
+            CREDIT_NOTE_NO_INVOICES_REPLY,
+          ),
+        );
+        return;
+      }
+
+      const code = await this.webviewAuthService.mintExchangeCode(
+        phoneNumber,
+        correlationId,
+      );
+      const webviewBaseUrl = this.config.getOrThrow<string>('WEBVIEW_BASE_URL');
+      await this.sendOrLogTerminal(jobId, () =>
+        this.whatsappClient.sendCtaMessage(
+          phoneNumber,
+          CREDIT_NOTE_CTA_BODY,
+          CREDIT_NOTE_CTA_BUTTON,
+          `${webviewBaseUrl}/credit-note?code=${code}`,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof TerminalCoreApiError) {
+        this.logger.error(
+          `credit-note request failed for job ${jobId}: ${error.message}`,
+        );
+        await this.sendOrLogTerminal(jobId, () =>
+          this.whatsappClient.sendTextMessage(
+            phoneNumber,
+            CREDIT_NOTE_FAILURE_REPLY,
           ),
         );
         return;

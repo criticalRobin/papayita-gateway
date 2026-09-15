@@ -4,18 +4,19 @@ import { EmbeddingProvider } from './embedding-provider.interface';
 import { SEED_PHRASES } from './domain/seed-phrases';
 
 const CATEGORY_AXIS: Record<string, number[]> = {
-  greeting: [1, 0, 0],
-  info_request: [0, 1, 0],
-  billing_attempt: [0, 0, 1],
+  greeting: [1, 0, 0, 0],
+  info_request: [0, 1, 0, 0],
+  billing_attempt: [0, 0, 1, 0],
+  credit_note_request: [0, 0, 0, 1],
 };
 
 function axisForPhrase(phrase: string): number[] {
   for (const [category, phrases] of Object.entries(SEED_PHRASES)) {
     if (phrases.includes(phrase)) {
-      return CATEGORY_AXIS[category];
+      return CATEGORY_AXIS[category] ?? [0, 0, 0, 0];
     }
   }
-  return [0, 0, 0];
+  return [0, 0, 0, 0];
 }
 
 function makeConfig(threshold = 0.45): ConfigService {
@@ -66,7 +67,7 @@ describe('ClassificationService', () => {
     const embed = jest.fn((text: string) =>
       Promise.resolve(
         text === 'mensaje ambiguo sin relacion'
-          ? [0, 0, 0]
+          ? [0, 0, 0, 0]
           : axisForPhrase(text),
       ),
     );

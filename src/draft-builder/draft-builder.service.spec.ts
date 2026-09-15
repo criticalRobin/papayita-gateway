@@ -206,11 +206,11 @@ describe('DraftBuilderService', () => {
         extracted,
       );
 
-      expect(catalogClient.searchBatch).toHaveBeenCalledWith(
-        token,
-        '+593993908744',
-        ['play station 5'],
-      );
+      expect(catalogClient.searchBatch).toHaveBeenCalledWith(token, {
+        emisorId,
+        whatsapp: '+593993908744',
+        terminos: ['play station 5'],
+      });
       expect(draft.items[0].resolutionStatus).toBe('auto_selected');
       expect(draft.items[0].selectedCandidateId).toBe(ps5Candidate.id);
       expect(applyEvent).toHaveBeenCalledWith(
@@ -407,11 +407,11 @@ describe('DraftBuilderService', () => {
         },
       );
 
-      expect(catalogClient.getDetalles).toHaveBeenCalledWith(
-        token,
-        '+593993908744',
-        [{ productoId: ps5Candidate.id, cantidad: 1, descuento: 0 }],
-      );
+      expect(catalogClient.getDetalles).toHaveBeenCalledWith(token, {
+        emisorId,
+        whatsapp: '+593993908744',
+        items: [{ productoId: ps5Candidate.id, cantidad: 1, descuento: 0 }],
+      });
       expect(emisorClient.getProfile).toHaveBeenCalledWith(token, emisorId);
       expect(invoice).not.toHaveProperty('secuencial');
       expect(invoice.detalles[0].impuestos).toEqual(

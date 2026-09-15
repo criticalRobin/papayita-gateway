@@ -158,6 +158,61 @@ describe('InvoiceEmissionProcessor', () => {
       });
     });
 
+    it('fetches the RIDE and sends a nota-credito-prefixed document on comprobante.autorizado for a nota de crédito', async () => {
+      const { processor, invoiceEmissionClient, whatsappClient } =
+        makeProcessor();
+
+      await processor.process(
+        makeJob({
+          evento: 'comprobante.autorizado',
+          payload: { emisorId, claveAcceso, tipoComprobante: '04' },
+        }),
+      );
+
+      expect(invoiceEmissionClient.getRide).toHaveBeenCalledWith(
+        'token-1',
+        claveAcceso,
+      );
+      expect(whatsappClient.uploadMedia).toHaveBeenCalledWith(
+        Buffer.from('pdf-bytes'),
+        'application/pdf',
+        `nota-credito-${claveAcceso}.pdf`,
+      );
+      expect(whatsappClient.sendDocumentMessage).toHaveBeenCalledWith(
+        phoneNumber,
+        'media-1',
+        `nota-credito-${claveAcceso}.pdf`,
+      );
+    });
+
+    it('sends a nota-de-crédito-worded rejection message on comprobante.rechazado for a nota de crédito', async () => {
+      const { processor, whatsappClient } = makeProcessor();
+
+      await processor.process(
+        makeJob({
+          evento: 'comprobante.rechazado',
+          payload: {
+            emisorId,
+            claveAcceso,
+            tipoComprobante: '04',
+            estado: 'DEVUELTA',
+            mensajes: [
+              {
+                identificador: '35',
+                mensaje: 'ARCHIVO NO CUMPLE ESTRUCTURA XML',
+                tipo: 'ERROR',
+              },
+            ],
+          },
+        }),
+      );
+
+      expect(whatsappClient.sendTextMessage).toHaveBeenCalledWith(
+        phoneNumber,
+        expect.stringContaining('nota de crédito'),
+      );
+    });
+
     it('drops the job when there is no pending emission for the emisorId', async () => {
       const { processor, whatsappClient, applyEvent } = makeProcessor({
         pending: null,

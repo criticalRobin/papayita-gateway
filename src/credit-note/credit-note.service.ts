@@ -13,8 +13,7 @@ import type { EmisorClient } from '../emisor/emisor-client.interface';
 import { PERSONA_LOOKUP_CLIENT } from '../persona/persona.module';
 import type { PersonaLookupClient } from '../persona/persona-lookup.interface';
 import { ConversationStateService } from '../conversation-state/conversation-state.service';
-import { WHATSAPP_CLIENT } from '../whatsapp/client/whatsapp.module';
-import type { WhatsappClient } from '../whatsapp/client/whatsapp-client.interface';
+import { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
 import { formatFechaEmision } from '../common/format-date';
 import { CREDIT_NOTE_CLIENT } from './credit-note-client.interface';
 import type { CreditNoteClient } from './credit-note-client.interface';
@@ -29,8 +28,6 @@ import { ConfirmCreditNoteDto } from './dto/confirm-credit-note.dto';
 
 const INVALID_LINK_MESSAGE =
   'Este enlace ya no es válido, pídele a tu negocio que envíe la solicitud de nuevo.';
-const CREDIT_NOTE_QUEUED_REPLY =
-  'Tu nota de crédito fue enviada al SRI para su emisión.';
 
 @Injectable()
 export class CreditNoteService {
@@ -41,7 +38,7 @@ export class CreditNoteService {
     private readonly personaClient: PersonaLookupClient,
     @Inject(CREDIT_NOTE_CLIENT)
     private readonly creditNoteClient: CreditNoteClient,
-    @Inject(WHATSAPP_CLIENT) private readonly whatsappClient: WhatsappClient,
+    private readonly pendingEmissionStore: PendingEmissionStore,
     private readonly conversationStateService: ConversationStateService,
   ) {}
 
@@ -137,6 +134,12 @@ export class CreditNoteService {
         'Tu sesión con el negocio expiró, pídele que envíe la solicitud de nuevo.',
       );
     }
+    const emisorId = await this.authService.getEmisorId(phoneNumber);
+    if (!emisorId) {
+      throw new UnauthorizedException(
+        'Tu sesión con el negocio expiró, pídele que envíe la solicitud de nuevo.',
+      );
+    }
 
     // Re-fetched fresh, never trusted from the webview or from the cached
     // candidate list — the only source of truth for money fields.
@@ -178,17 +181,14 @@ export class CreditNoteService {
       throw error;
     }
 
-    // No webhook exists for credit notes (unlike facturas) — the "done"
-    // signal is synchronous, right here, not deferred to a queue processor.
-    await this.conversationStateService.applyEvent(phoneNumber, {
-      type: 'WEBHOOK_RECEIVED',
-    });
-
-    // The one result message for this interaction (message 2 of 2).
-    await this.whatsappClient.sendTextMessage(
+    // Correlates the async comprobante.autorizado/rechazado webhook back to this
+    // conversation, same as facturas — InvoiceEmissionProcessor handles both
+    // document types off tipoComprobante in the webhook payload. See
+    // PendingEmissionStore for the emisorId-only limitation.
+    await this.pendingEmissionStore.set(emisorId, {
       phoneNumber,
-      CREDIT_NOTE_QUEUED_REPLY,
-    );
+      correlationId,
+    });
   }
 
   private async fetchAndEnrichXmlData(

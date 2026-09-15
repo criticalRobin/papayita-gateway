@@ -31,8 +31,8 @@ export interface CreditNoteClient {
     claveAcceso: string,
   ): Promise<Buffer>;
 
-  // POST /sri/emitir/nota-credito — fire-and-forget on Core API's side
-  // (no webhook exists for credit notes yet, unlike facturas).
+  // POST /sri/emitir/nota-credito — result arrives async via Core API's
+  // comprobante.autorizado/rechazado webhook, same as facturas.
   emitir(
     token: CoreApiUserToken,
     payload: FinalCreditNote,

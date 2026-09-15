@@ -49,7 +49,7 @@ export class CreditNoteController {
     );
     return {
       correlationId: req.webviewSession.correlationId,
-      status: 'queued',
+      status: 'submitted',
     };
   }
 }

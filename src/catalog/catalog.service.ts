@@ -8,6 +8,8 @@ import {
   ProductoDetalle,
   ProductoDetalleRequestItem,
 } from './catalog-search.interface';
+import { PostBatchCatalogProductDto } from './dto/post-batch-catalog.dto';
+import { PostProductDetailDto } from './dto/post-product-detail.dto';
 
 interface CatalogSearchResponse {
   success: boolean;
@@ -27,30 +29,38 @@ export class CatalogService implements CatalogSearchClient {
 
   async searchBatch(
     token: CoreApiUserToken,
-    whatsapp: string,
-    terminos: string[],
+    body: PostBatchCatalogProductDto,
   ): Promise<CatalogSearchResultGroup[]> {
-    if (terminos.length === 0) return [];
+    const cleanBody: PostBatchCatalogProductDto = {
+      ...body,
+      whatsapp: this.toE164(body.whatsapp),
+    };
+
+    if (cleanBody.terminos.length === 0) return [];
 
     const response = await this.coreApiClient.post<CatalogSearchResponse>(
       '/inventario/productos/buscar',
       token,
-      { whatsapp: this.toE164(whatsapp), termino: terminos },
+      cleanBody,
     );
     return response.data;
   }
 
   async getDetalles(
     token: CoreApiUserToken,
-    whatsapp: string,
-    items: ProductoDetalleRequestItem[],
+    body: PostProductDetailDto,
   ): Promise<ProductoDetalle[]> {
-    if (items.length === 0) return [];
+    const cleanBody: PostProductDetailDto = {
+      ...body,
+      whatsapp: this.toE164(body.whatsapp),
+    };
+
+    if (cleanBody.items.length === 0) return [];
 
     const response = await this.coreApiClient.post<ProductoDetallesResponse>(
       '/inventario/productos/detalles',
       token,
-      { whatsapp: this.toE164(whatsapp), items },
+      cleanBody,
     );
     return response.data.detalles;
   }

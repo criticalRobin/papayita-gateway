@@ -35,6 +35,8 @@ import { assembleInvoice } from './domain/assemble-invoice';
 import { CandidateResolution, Draft, FinalInvoice } from './domain/types';
 import { ConfirmDraftDto } from './dto/confirm-draft.dto';
 import { formatFechaEmision } from '../common/format-date';
+import { PostBatchCatalogProductDto } from 'src/catalog/dto/post-batch-catalog.dto';
+import { PostProductDetailDto } from 'src/catalog/dto/post-product-detail.dto';
 
 @Injectable()
 export class DraftBuilderService {
@@ -59,8 +61,9 @@ export class DraftBuilderService {
     extracted: ExtractedBillingAttempt,
   ): Promise<{ correlationId: string; draft: Draft }> {
     const token = await this.authService.getValidToken(phoneNumber);
+    const emisorId = await this.authService.getEmisorId(phoneNumber);
 
-    if (!token) {
+    if (!token || !emisorId) {
       throw new UnauthorizedException('not authenticated');
     }
 
@@ -77,10 +80,15 @@ export class DraftBuilderService {
 
     const terminos = extracted.items.map((item) => item.textoConsulta);
 
+    const batchBody: PostBatchCatalogProductDto = {
+      emisorId,
+      whatsapp: phoneNumber,
+      terminos,
+    };
+
     const searchResults = await this.catalogClient.searchBatch(
       token,
-      phoneNumber,
-      terminos,
+      batchBody,
     );
 
     const resolutionByIdCliente = this.matchResultsToItems(
@@ -150,15 +158,17 @@ export class DraftBuilderService {
       }
     });
 
-    const productoDetalles = await this.catalogClient.getDetalles(
-      token,
-      phoneNumber,
-      dto.detalles.map((detalle) => ({
+    const body: PostProductDetailDto = {
+      emisorId,
+      whatsapp: phoneNumber,
+      items: dto.detalles.map((detalle) => ({
         productoId: detalle.selectedCandidateId as string,
         cantidad: detalle.cantidad,
         descuento: 0,
       })),
-    );
+    };
+
+    const productoDetalles = await this.catalogClient.getDetalles(token, body);
 
     if (productoDetalles.length !== dto.detalles.length) {
       throw new BadRequestException(

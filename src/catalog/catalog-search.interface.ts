@@ -1,4 +1,6 @@
 import type { CoreApiUserToken } from '../core-api/core-api-token';
+import { PostBatchCatalogProductDto } from './dto/post-batch-catalog.dto';
+import { PostProductDetailDto } from './dto/post-product-detail.dto';
 
 export interface CatalogProduct {
   id: string;
@@ -19,7 +21,7 @@ export interface CatalogSearchResultGroup {
 export interface ProductoDetalleRequestItem {
   productoId: string;
   cantidad: number;
-  descuento: number;
+  descuento?: number;
 }
 
 export interface ImpuestoDetalle {
@@ -48,8 +50,7 @@ export interface CatalogSearchClient {
   // the superseded unbatched/emisorId-keyed shape — don't build against that.
   searchBatch(
     token: CoreApiUserToken,
-    whatsapp: string,
-    terminos: string[],
+    body: PostBatchCatalogProductDto,
   ): Promise<CatalogSearchResultGroup[]>;
 
   // POST /inventario/productos/detalles — given confirmed productoId+cantidad,
@@ -59,7 +60,6 @@ export interface CatalogSearchClient {
   // replaces the need for a separate re-validation search.
   getDetalles(
     token: CoreApiUserToken,
-    whatsapp: string,
-    items: ProductoDetalleRequestItem[],
+    body: PostProductDetailDto,
   ): Promise<ProductoDetalle[]>;
 }

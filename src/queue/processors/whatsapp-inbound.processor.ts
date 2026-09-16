@@ -28,6 +28,11 @@ import {
 } from '../dto/inbound-message-job.dto';
 import { EXTRACTION_CLIENT } from '../../extraction/extraction.module';
 import type { LlmClient } from '../../extraction/llm-client.interface';
+import { PURCHASES_CLIENT } from '../../purchases/purchases.module';
+import type {
+  PurchasesClient,
+  PurchaseRegisteredResponse,
+} from '../../purchases/purchases-client.interface';
 
 // Hardcoded, deterministic replies — no LLM call here (project-info.md constraint #5).
 const STT_FAILURE_REPLY =
@@ -64,6 +69,12 @@ const CREDIT_NOTE_NO_INVOICES_REPLY =
   'No encontramos facturas autorizadas para ese cliente, verifica el número e intenta de nuevo.';
 const CREDIT_NOTE_NO_ID_REPLY =
   'No pudimos identificar el número de cédula/RUC del cliente, por favor incluye el número completo.';
+const PURCHASE_INVALID_FILE_REPLY =
+  'Solo aceptamos el archivo XML de la factura de compra, por favor envíalo como documento adjunto.';
+const PURCHASE_FAILURE_REPLY =
+  'No pudimos registrar tu compra, por favor verifica el XML e intenta de nuevo.';
+const PURCHASE_SUCCESS_REPLY = (response: PurchaseRegisteredResponse): string =>
+  `Compra registrada: ${response.proveedorRazonSocial}, comprobante ${response.establecimiento}-${response.puntoEmision}-${response.secuencial}, total $${response.importeTotal.toFixed(2)}.`;
 
 // Accent-insensitive: typing "sesion" without the tilde on a phone keyboard
 // is common. "login" is accepted as a plain-English fallback.
@@ -110,13 +121,15 @@ export class WhatsappInboundProcessor extends WorkerHost {
     private readonly webviewAuthService: WebviewAuthService,
     private readonly draftBuilderService: DraftBuilderService,
     private readonly creditNoteService: CreditNoteService,
+    @Inject(PURCHASES_CLIENT) private readonly purchasesClient: PurchasesClient,
     private readonly config: ConfigService,
   ) {
     super();
   }
 
   async process(job: Job<InboundMessageJobDto>): Promise<void> {
-    const { phoneNumber, type, text, mediaId, whatsappMessageId } = job.data;
+    const { phoneNumber, type, text, mediaId, fileName, whatsappMessageId } =
+      job.data;
     this.logger.log(`processing ${type} message, job ${job.id}`);
     await this.whatsappClient.markAsRead(whatsappMessageId);
 
@@ -142,6 +155,7 @@ export class WhatsappInboundProcessor extends WorkerHost {
       type,
       text,
       mediaId,
+      fileName,
       job.id,
     );
 
@@ -237,6 +251,7 @@ export class WhatsappInboundProcessor extends WorkerHost {
     type: InboundMessageType,
     text: string | undefined,
     mediaId: string | undefined,
+    fileName: string | undefined,
     jobId: string | number | undefined,
   ): Promise<ReplyOutcome> {
     switch (type) {
@@ -244,6 +259,13 @@ export class WhatsappInboundProcessor extends WorkerHost {
         return this.buildClassifiedReply(phoneNumber, text as string, jobId);
       case InboundMessageType.AUDIO:
         return this.buildAudioReply(phoneNumber, mediaId as string, jobId);
+      case InboundMessageType.DOCUMENT:
+        return this.buildPurchaseReply(
+          phoneNumber,
+          mediaId as string,
+          fileName,
+          jobId,
+        );
       case InboundMessageType.UNSUPPORTED:
         return { kind: 'text', text: UNSUPPORTED_REPLY };
     }
@@ -444,6 +466,53 @@ export class WhatsappInboundProcessor extends WorkerHost {
         return { kind: 'text', text: STT_FAILURE_REPLY };
       }
       throw error; // RetryableWhatsappError / RetryableSttError — let BullMQ retry
+    }
+  }
+
+  // Purchases: doc in, result out — no CTA, no webview, no conversation-state
+  // involvement (any inbound document is treated as a purchase-XML attempt
+  // directly, not gated by classification/state). Exactly one reply.
+  private async buildPurchaseReply(
+    phoneNumber: string,
+    mediaId: string,
+    fileName: string | undefined,
+    jobId: string | number | undefined,
+  ): Promise<ReplyOutcome> {
+    const token = await this.authService.getValidToken(phoneNumber);
+    if (!token) {
+      this.logger.error(
+        `purchase document for job ${jobId} arrived without a valid token after the auth gate`,
+      );
+      return { kind: 'text', text: PURCHASE_FAILURE_REPLY };
+    }
+
+    try {
+      const { buffer, mimeType } =
+        await this.whatsappClient.downloadMedia(mediaId);
+
+      const looksLikeXml =
+        mimeType.toLowerCase().includes('xml') ||
+        (fileName?.toLowerCase().endsWith('.xml') ?? false);
+      if (!looksLikeXml) {
+        return { kind: 'text', text: PURCHASE_INVALID_FILE_REPLY };
+      }
+
+      const response = await this.purchasesClient.registrarXml(
+        token,
+        buffer.toString('utf-8'),
+      );
+      return { kind: 'text', text: PURCHASE_SUCCESS_REPLY(response) };
+    } catch (error) {
+      if (
+        error instanceof TerminalWhatsappError ||
+        error instanceof TerminalCoreApiError
+      ) {
+        this.logger.error(
+          `purchase registration failed for job ${jobId}: ${error.message}`,
+        );
+        return { kind: 'text', text: PURCHASE_FAILURE_REPLY };
+      }
+      throw error; // RetryableWhatsappError / RetryableCoreApiError — let BullMQ retry
     }
   }
 }

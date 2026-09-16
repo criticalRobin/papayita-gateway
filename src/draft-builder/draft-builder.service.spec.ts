@@ -5,8 +5,11 @@ import {
 } from '@nestjs/common';
 import type { AuthService } from '../auth/auth.service';
 import type { ConversationStateService } from '../conversation-state/conversation-state.service';
+import type { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
+import type { EmissionWatchdogService } from '../invoice-emission/emission-watchdog.service';
 import type { ConfigService } from '@nestjs/config';
 import { DraftBuilderService } from './draft-builder.service';
+import { UnresolvedCatalogItemsError } from './domain/errors';
 import { FormaPago } from './domain/types';
 
 // Loose mock shapes (not Partial<RealService>) — referencing a real class's
@@ -227,6 +230,26 @@ describe('DraftBuilderService', () => {
       await expect(
         service.buildDraft('+593993908744', extracted),
       ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('throws UnresolvedCatalogItemsError and does not store DRAFT_READY when a term has zero catalog candidates', async () => {
+      const { service, applyEvent } = makeService({
+        catalogClient: {
+          searchBatch: jest
+            .fn()
+            .mockResolvedValue([{ termino: 'play station 5', productos: [] }]),
+        },
+      });
+
+      const error = await service
+        .buildDraft('+593993908744', extracted)
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(UnresolvedCatalogItemsError);
+      expect((error as UnresolvedCatalogItemsError).missingTerms).toEqual([
+        'play station 5',
+      ]);
+      expect(applyEvent).not.toHaveBeenCalled();
     });
   });
 

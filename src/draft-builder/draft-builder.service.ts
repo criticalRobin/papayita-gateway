@@ -31,6 +31,8 @@ import {
 import { resolveCandidates } from './domain/resolve-candidates';
 import { mergeCatalogResults } from './domain/merge-catalog-results';
 import { mergeProductoDetalles } from './domain/merge-producto-detalles';
+import { findUnresolvedItems } from './domain/find-unresolved-items';
+import { UnresolvedCatalogItemsError } from './domain/errors';
 import { assembleInvoice } from './domain/assemble-invoice';
 import { CandidateResolution, Draft, FinalInvoice } from './domain/types';
 import { ConfirmDraftDto } from './dto/confirm-draft.dto';
@@ -97,6 +99,15 @@ export class DraftBuilderService {
     );
 
     const items = mergeCatalogResults(extracted.items, resolutionByIdCliente);
+
+    const unresolved = findUnresolvedItems(items);
+    if (unresolved.length > 0) {
+      // Never send a partial-catalog draft — the webview has nothing to
+      // offer for a zero-candidate item, so don't move state past idle.
+      throw new UnresolvedCatalogItemsError(
+        unresolved.map((item) => item.textoConsulta),
+      );
+    }
 
     const correlationId = randomUUID();
     const draft: Draft = {

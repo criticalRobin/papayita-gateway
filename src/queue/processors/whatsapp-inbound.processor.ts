@@ -51,6 +51,8 @@ const DRAFT_CTA_BODY =
 const DRAFT_CTA_BUTTON = 'Ver borrador';
 const BILLING_FAILURE_REPLY =
   'No pudimos procesar tu solicitud de facturación, por favor intenta de nuevo.';
+const UNRESOLVED_PRODUCTS_REPLY = (missingTerms: string[]): string =>
+  `No encontramos en tu catálogo: ${missingTerms.join(', ')}. Agrégalos a tu inventario o revisa el nombre e intenta de nuevo.`;
 const INVENTORY_CTA_BODY = 'Administra tus categorías y productos desde aquí:';
 const INVENTORY_CTA_BUTTON = 'Ver inventario';
 const CREDIT_NOTE_CTA_BODY =
@@ -312,6 +314,18 @@ export class WhatsappInboundProcessor extends WorkerHost {
         ),
       );
     } catch (error) {
+      if (error instanceof UnresolvedCatalogItemsError) {
+        this.logger.warn(
+          `billing attempt for job ${jobId} has unresolved catalog items: ${error.missingTerms.join(', ')}`,
+        );
+        await this.sendOrLogTerminal(jobId, () =>
+          this.whatsappClient.sendTextMessage(
+            phoneNumber,
+            UNRESOLVED_PRODUCTS_REPLY(error.missingTerms),
+          ),
+        );
+        return;
+      }
       if (
         error instanceof ExtractionParseError ||
         error instanceof TerminalCoreApiError

@@ -29,7 +29,7 @@ export class EmissionWatchdogService {
       300,
     );
     await this.queue.add('emission-timeout', params, {
-      jobId: `timeout:${params.correlationId}`,
+      jobId: `timeout-${params.correlationId}`,
       delay: timeoutSeconds * 1000,
     });
   }

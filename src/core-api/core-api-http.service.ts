@@ -58,11 +58,12 @@ export class CoreApiHttpService implements CoreApiClient {
     path: string,
     token: CoreApiUserToken,
     body: unknown,
+    headers?: Record<string, string>,
   ): Promise<T> {
     try {
       const { data } = await firstValueFrom(
         this.httpService.post<T>(`${this.baseUrl}${path}`, body, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${token}`, ...headers },
         }),
       );
       return data;

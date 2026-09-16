@@ -161,6 +161,35 @@ describe('WebhookService', () => {
       );
     });
 
+    it('enqueues a document message with mediaId and fileName set', async () => {
+      const { queue, add } = makeQueue();
+      const service = new WebhookService(makeConfig({}), queue);
+      const payload = payloadWithMessages([
+        {
+          from: '5219999999999',
+          id: 'wamid.DOC1',
+          type: 'document',
+          document: {
+            id: 'media-2',
+            filename: 'factura-compra.xml',
+            mime_type: 'application/xml',
+          },
+        },
+      ]);
+
+      await service.handlePayload(payload);
+
+      expect(add).toHaveBeenCalledWith(
+        'inbound',
+        expect.objectContaining({
+          type: InboundMessageType.DOCUMENT,
+          mediaId: 'media-2',
+          fileName: 'factura-compra.xml',
+        }),
+        { jobId: 'wamid.DOC1' },
+      );
+    });
+
     it('maps unrecognized message types to UNSUPPORTED', async () => {
       const { queue, add } = makeQueue();
       const service = new WebhookService(makeConfig({}), queue);

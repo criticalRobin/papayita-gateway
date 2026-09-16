@@ -36,8 +36,32 @@ export class WhatsappAudioMediaDto {
   voice?: boolean;
 }
 
+export class WhatsappDocumentMediaDto {
+  @IsString()
+  id: string;
+
+  // Present on real payloads but unused by our logic — declared so the global
+  // forbidNonWhitelisted ValidationPipe (main.ts) doesn't 400 the webhook on them.
+  @IsOptional()
+  @IsString()
+  mime_type?: string;
+
+  @IsOptional()
+  @IsString()
+  sha256?: string;
+
+  @IsOptional()
+  @IsString()
+  filename?: string;
+
+  @IsOptional()
+  @IsString()
+  caption?: string;
+}
+
 // Meta sends many more message types (interactive, button, location, reaction, ...) we don't
-// handle yet — only text/audio fields are modeled, everything else falls through as "unsupported".
+// handle yet — only text/audio/document fields are modeled, everything else falls through as
+// "unsupported".
 export class WhatsappMessageDto {
   @IsString()
   from: string;
@@ -57,6 +81,11 @@ export class WhatsappMessageDto {
   @ValidateNested()
   @Type(() => WhatsappAudioMediaDto)
   audio?: WhatsappAudioMediaDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WhatsappDocumentMediaDto)
+  document?: WhatsappDocumentMediaDto;
 
   // Present on real payloads but unused by our logic — declared so the global
   // forbidNonWhitelisted ValidationPipe (main.ts) doesn't 400 the webhook on them.

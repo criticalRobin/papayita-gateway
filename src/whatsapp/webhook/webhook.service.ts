@@ -92,7 +92,8 @@ export class WebhookService {
       whatsappMessageId: message.id,
       type: this.mapType(message.type),
       text: message.text?.body,
-      mediaId: message.audio?.id,
+      mediaId: message.audio?.id ?? message.document?.id,
+      fileName: message.document?.filename,
     });
 
     const errors = await validate(jobData);
@@ -114,6 +115,7 @@ export class WebhookService {
   private mapType(type: string): InboundMessageType {
     if (type === 'text') return InboundMessageType.TEXT;
     if (type === 'audio') return InboundMessageType.AUDIO;
+    if (type === 'document') return InboundMessageType.DOCUMENT;
     return InboundMessageType.UNSUPPORTED;
   }
 }

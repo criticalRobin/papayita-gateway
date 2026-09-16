@@ -20,6 +20,7 @@ import { CREDIT_NOTE_CLIENT } from './credit-note-client.interface';
 import type { CreditNoteClient } from './credit-note-client.interface';
 import { buildFinalCreditNote } from './domain/build-final-credit-note';
 import { parseComprobanteXml } from './domain/parse-comprobante-xml';
+import { scaleDetalleForCantidad } from './domain/scale-detalle';
 import {
   ComprobanteSummary,
   CreditNoteCandidatesDocument,
@@ -147,14 +148,22 @@ export class CreditNoteService {
     // candidate list — the only source of truth for money fields.
     const data = await this.fetchAndEnrichXmlData(token, dto.claveAcceso);
 
-    const selectedDetalles = dto.selectedIndexes.map((index) => {
-      const detalle = data.detalles[index];
+    // The webview clamps cantidad client-side to the original invoiced
+    // quantity, but that's not a security boundary — re-validate against the
+    // freshly re-fetched XML before scaling any money field.
+    const selectedDetalles = dto.selectedItems.map((item) => {
+      const detalle = data.detalles[item.index];
       if (!detalle) {
         throw new BadRequestException(
-          `Selección de producto inválida (índice ${index}).`,
+          `Selección de producto inválida (índice ${item.index}).`,
         );
       }
-      return detalle;
+      if (item.cantidad > detalle.cantidad) {
+        throw new BadRequestException(
+          `La cantidad solicitada excede la cantidad facturada originalmente (índice ${item.index}).`,
+        );
+      }
+      return scaleDetalleForCantidad(detalle, item.cantidad);
     });
 
     const finalCreditNote = buildFinalCreditNote(

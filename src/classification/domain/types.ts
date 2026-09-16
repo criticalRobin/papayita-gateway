@@ -3,6 +3,7 @@ export type IntentCategory =
   | 'info_request'
   | 'billing_attempt'
   | 'credit_note_request'
+  | 'manage_inventory'
   | 'out_of_context';
 
 export type ClassificationMethod =

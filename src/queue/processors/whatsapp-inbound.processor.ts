@@ -9,11 +9,16 @@ import { STT_CLIENT } from '../../stt/stt.module';
 import type { SttClient } from '../../stt/stt-client.interface';
 import { TerminalSttError } from '../../stt/stt.errors';
 import { ClassificationService } from '../../classification/classification.service';
-import { extractIdNumber, normalize } from '../../classification/domain/rules';
+import {
+  extractIdNumber,
+  matchManageInventoryCommand,
+  normalize,
+} from '../../classification/domain/rules';
 import { ConversationStateService } from '../../conversation-state/conversation-state.service';
 import { AuthService } from '../../auth/auth.service';
 import { WebviewAuthService } from '../../webview-auth/webview-auth.service';
 import { DraftBuilderService } from '../../draft-builder/draft-builder.service';
+import { UnresolvedCatalogItemsError } from '../../draft-builder/domain/errors';
 import { CreditNoteService } from '../../credit-note/credit-note.service';
 import { ExtractionParseError } from '../../extraction/extraction.errors';
 import { TerminalCoreApiError } from '../../core-api/core-api.errors';
@@ -80,19 +85,6 @@ function isLogoutCommand(text: string | undefined): boolean {
   return normalized === 'cerrar sesion' || normalized === 'logout';
 }
 
-function isManageInventoryCommand(text: string | undefined): boolean {
-  if (!text) return false;
-  const normalized = text
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .trim()
-    .toLowerCase();
-  return (
-    normalized === 'administrar productos' ||
-    normalized === 'administrar inventario'
-  );
-}
-
 // buildReply()/buildClassifiedReply()/buildAudioReply() return one of these:
 // 'text' means process() still needs to send the given text via sendTextMessage;
 // 'handled' means the branch already sent (or terminally failed to send) its
@@ -143,14 +135,6 @@ export class WhatsappInboundProcessor extends WorkerHost {
       return;
     }
 
-    // Hardcoded command, checked before classification — no LLM cost, and
-    // this isn't a billing interaction so it must never be routed through
-    // buildClassifiedReply's billing_attempt path.
-    if (type === InboundMessageType.TEXT && isManageInventoryCommand(text)) {
-      await this.handleManageInventoryCommand(phoneNumber, job.id);
-      return;
-    }
-
     const outcome = await this.buildReply(
       phoneNumber,
       type,
@@ -174,7 +158,8 @@ export class WhatsappInboundProcessor extends WorkerHost {
   ): Promise<void> {
     if (
       type === InboundMessageType.TEXT &&
-      (isLoginCommand(text) || isManageInventoryCommand(text))
+      (isLoginCommand(text) ||
+        (text && matchManageInventoryCommand(normalize(text))))
     ) {
       const code = await this.webviewAuthService.mintLoginCode(phoneNumber);
       const webviewBaseUrl = this.config.getOrThrow<string>('WEBVIEW_BASE_URL');
@@ -194,9 +179,9 @@ export class WhatsappInboundProcessor extends WorkerHost {
     );
   }
 
-  // "administrar productos"/"administrar inventario" from an authenticated
-  // phone: one CTA message, no LLM call, not part of the invoice 2-message
-  // budget (this isn't a billing interaction).
+  // manage_inventory intent from an authenticated phone: one CTA message, no
+  // LLM call (rule-matched, see classification/domain/rules.ts), not part of
+  // the invoice 2-message budget (this isn't a billing interaction).
   private async handleManageInventoryCommand(
     phoneNumber: string,
     jobId: string | number | undefined,
@@ -288,6 +273,9 @@ export class WhatsappInboundProcessor extends WorkerHost {
         return { kind: 'handled' };
       case 'credit_note_request':
         await this.handleCreditNoteRequest(phoneNumber, text, jobId);
+        return { kind: 'handled' };
+      case 'manage_inventory':
+        await this.handleManageInventoryCommand(phoneNumber, jobId);
         return { kind: 'handled' };
       case 'out_of_context':
         return { kind: 'text', text: OUT_OF_CONTEXT_REPLY };

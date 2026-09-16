@@ -44,5 +44,13 @@ export const SEED_PHRASES: Record<IntentCategory, string[]> = {
     'el cliente 1802258721 quiere devolver un producto que le facture',
     'necesito anular unos productos de una factura ya emitida al cliente 1850137918',
   ],
+  manage_inventory: [
+    'quiero administrar mi catalogo de productos',
+    'necesito editar los precios de mis productos',
+    'como agrego un producto nuevo a mi inventario',
+    'quiero ver y actualizar mi inventario',
+    'necesito gestionar mis categorias de productos',
+    'dejame revisar mi catalogo',
+  ],
   out_of_context: [],
 };

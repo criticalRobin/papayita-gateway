@@ -317,8 +317,13 @@ describe('WhatsappInboundProcessor', () => {
   });
 
   describe('administrar productos', () => {
-    it('mints an inventory code and sends a CTA, skipping classification, when authenticated', async () => {
+    it('mints an inventory code and sends a CTA via the manage_inventory intent, when authenticated', async () => {
       getValidToken.mockResolvedValue('valid-token');
+      classify.mockResolvedValue({
+        category: 'manage_inventory',
+        confidence: 1,
+        method: 'rule',
+      });
       const job = makeJob({
         phoneNumber: '5219999999999',
         whatsappMessageId: 'wamid.inventory',
@@ -328,6 +333,7 @@ describe('WhatsappInboundProcessor', () => {
 
       await processor.process(job);
 
+      expect(classify).toHaveBeenCalledWith('administrar productos');
       expect(mintInventoryCode).toHaveBeenCalledWith('5219999999999');
       expect(sendCtaMessage).toHaveBeenCalledWith(
         '5219999999999',
@@ -335,12 +341,16 @@ describe('WhatsappInboundProcessor', () => {
         expect.any(String),
         'https://webview.test/inventory?code=inventory-code-1',
       );
-      expect(classify).not.toHaveBeenCalled();
       expect(sendTextMessage).not.toHaveBeenCalled();
     });
 
-    it('recognizes "administrar inventario" as an alias', async () => {
+    it('recognizes "administrar inventario" as an alias via the same intent', async () => {
       getValidToken.mockResolvedValue('valid-token');
+      classify.mockResolvedValue({
+        category: 'manage_inventory',
+        confidence: 1,
+        method: 'rule',
+      });
       const job = makeJob({
         phoneNumber: '5219999999999',
         whatsappMessageId: 'wamid.inventory-alias',

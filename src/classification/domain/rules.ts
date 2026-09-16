@@ -20,6 +20,33 @@ const GREETING_PHRASES = [
   'saludos',
 ];
 
+// Whole-message phrases only, same rationale as GREETING_PHRASES — narrow
+// and exact so this can run unconditionally before classification's
+// embedding step, no LLM cost. Broadened from the old hardcoded two-phrase
+// check (isManageInventoryCommand in the processor) so this is no longer a
+// pre-classification special case but a real rule inside the intent system;
+// the embedding seed phrases (seed-phrases.ts) then catch paraphrases this
+// exact list misses.
+const MANAGE_INVENTORY_PHRASES = [
+  'administrar productos',
+  'administrar inventario',
+  'administrar mis productos',
+  'administrar mi inventario',
+  'gestionar productos',
+  'gestionar inventario',
+  'gestionar mis productos',
+  'gestionar mi inventario',
+  'ver inventario',
+  'ver mi inventario',
+  'ver productos',
+  'ver mis productos',
+  'ver catalogo',
+  'ver mi catalogo',
+  'mis productos',
+  'mi inventario',
+  'catalogo de productos',
+];
+
 // A standalone 10-digit (cédula) or 13-digit (RUC) number is essentially
 // unique to a real billing attempt — nobody asks a generic question about
 // the service while quoting a specific client's identification number.
@@ -34,6 +61,18 @@ const ID_NUMBER = /\b\d{10}\b|\b\d{13}\b/;
 // "nota de credito de la factura del cliente 1850137918"), and the more
 // specific credit-note phrasing must win.
 const CREDIT_NOTE_STEM = /nota\s+de\s+cr[eé]dito|nota\s+cr[eé]dito/;
+
+// Real-world credit-note requests rarely say "nota de crédito" literally —
+// they describe the action instead ("anula parte de la factura...",
+// "necesito devolver un producto que le facture..."). Without this, those
+// messages still contain an id number + the word "factura", which trips
+// matchBillingAttempt's ID_NUMBER+BILLING_STEM shortcut below (checked in
+// applyRules() only after credit-note matching fails) and got
+// misclassified as billing_attempt before embedding fallback ever ran —
+// the rule stage returns confidence 1 and short-circuits everything after
+// it. Stems, not full words, so anular/anula/anulación, devolver/devuelve/
+// devolución, retornar, reembolso/reembolsar all match.
+const CREDIT_NOTE_ACTION_STEM = /anul|devol|retorn|reembols/;
 
 // Messages starting with these are asking ABOUT the service (info_request),
 // not asking to perform a billing action right now — even when they mention
@@ -91,7 +130,11 @@ export function matchBillingAttempt(normalized: string): boolean {
 // together, no verb-only fallback. A credit note is always issued against a
 // specific customer, so the id number is never optional here.
 export function matchCreditNoteRequest(normalized: string): boolean {
-  return ID_NUMBER.test(normalized) && CREDIT_NOTE_STEM.test(normalized);
+  return (
+    ID_NUMBER.test(normalized) &&
+    (CREDIT_NOTE_STEM.test(normalized) ||
+      CREDIT_NOTE_ACTION_STEM.test(normalized))
+  );
 }
 
 // Pulls the customer's cédula/RUC out of already-normalized text — the same
@@ -123,6 +166,10 @@ export function matchTrivialNoise(normalized: string): boolean {
   return meaningful.length < 2;
 }
 
+export function matchManageInventoryCommand(normalized: string): boolean {
+  return MANAGE_INVENTORY_PHRASES.includes(normalized);
+}
+
 export function applyRules(text: string): IntentCategory | null {
   const normalized = normalize(text);
   if (matchGreeting(normalized)) {
@@ -130,6 +177,9 @@ export function applyRules(text: string): IntentCategory | null {
   }
   if (matchTrivialNoise(normalized)) {
     return 'out_of_context';
+  }
+  if (matchManageInventoryCommand(normalized)) {
+    return 'manage_inventory';
   }
   if (matchCreditNoteRequest(normalized)) {
     return 'credit_note_request';

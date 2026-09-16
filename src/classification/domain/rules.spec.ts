@@ -4,6 +4,7 @@ import {
   matchBillingAttempt,
   matchCreditNoteRequest,
   matchGreeting,
+  matchManageInventoryCommand,
   matchTrivialNoise,
   normalize,
 } from './rules';
@@ -140,10 +141,51 @@ describe('matchCreditNoteRequest', () => {
     }
   });
 
-  // Unlike billing_attempt's seed set, credit_note_request's seeds deliberately
-  // include paraphrases without the literal stem ("devolver", "anular un
-  // producto") — those exist precisely to be caught by embedding fallback
-  // instead of this rule, so no "matches every seeded phrase" assertion here.
+  // Regression guard for the reported real-world bug: "anula parte de la
+  // factura del cliente 1850137918" contains an id number + "factura", which
+  // used to trip matchBillingAttempt's ID_NUMBER+BILLING_STEM shortcut before
+  // this ever got a chance to run (applyRules checks credit-note first, but
+  // this function used to return false for exactly this kind of phrasing).
+  // Action-verb stems (anular/devolver/retornar/reembolsar) now widen the
+  // match beyond the literal "nota de crédito" phrase, so every seeded
+  // credit_note_request phrase matches here directly — none of them need to
+  // fall through to embedding fallback anymore.
+  it('matches every seeded credit_note_request phrase', () => {
+    for (const phrase of SEED_PHRASES.credit_note_request) {
+      expect(matchCreditNoteRequest(normalize(phrase))).toBe(true);
+    }
+  });
+
+  it.each([
+    'anula parte de la factura del cliente 1850137918',
+    'necesito devolver un producto que le facture a 1802258721',
+    'quiero hacer una devolucion de la venta del cliente 1850137918001',
+  ])(
+    'matches action-verb phrasing without the literal "nota de crédito" stem: "%s"',
+    (text) => {
+      expect(matchCreditNoteRequest(normalize(text))).toBe(true);
+    },
+  );
+});
+
+describe('matchManageInventoryCommand', () => {
+  it.each([
+    'administrar productos',
+    'administrar inventario',
+    'Administrar Inventario',
+    'ver mi catalogo',
+    'gestionar mis productos',
+    'mis productos',
+  ])('matches "%s"', (text) => {
+    expect(matchManageInventoryCommand(normalize(text))).toBe(true);
+  });
+
+  it('does not match a billing attempt or unrelated text', () => {
+    expect(
+      matchManageInventoryCommand(normalize('quiero facturar dos colas')),
+    ).toBe(false);
+    expect(matchManageInventoryCommand(normalize('hola'))).toBe(false);
+  });
 });
 
 describe('extractIdNumber', () => {
@@ -174,6 +216,17 @@ describe('applyRules', () => {
     expect(
       applyRules('nota de credito de la factura del cliente 1850137918'),
     ).toBe('credit_note_request');
+  });
+
+  it('returns credit_note_request (not billing_attempt) for action-verb phrasing with no literal "nota de crédito" stem', () => {
+    expect(applyRules('anula parte de la factura del cliente 1850137918')).toBe(
+      'credit_note_request',
+    );
+  });
+
+  it('returns manage_inventory for the inventory command', () => {
+    expect(applyRules('administrar productos')).toBe('manage_inventory');
+    expect(applyRules('ver mi catalogo')).toBe('manage_inventory');
   });
 
   it('returns greeting for a pure salutation', () => {

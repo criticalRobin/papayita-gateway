@@ -16,9 +16,10 @@ export interface BuildFinalCreditNoteOptions {
 // passed in already formatted (dd/mm/yyyy) by the caller, same as
 // draft-builder's buildSkeleton — keeps this function a pure clock-free
 // mapping, no `new Date()` inside domain/. Every money field on
-// `selectedDetalles` must already come from a freshly re-fetched XML (the
-// caller's responsibility, see credit-note.service.ts) — this function never
-// trusts anything the webview submitted for cantidad/precioUnitario/impuestos.
+// `selectedDetalles` must already come from a freshly re-fetched XML and,
+// for a partial-quantity credit, already run through scaleDetalleForCantidad
+// (the caller's responsibility, see credit-note.service.ts) — this function
+// never trusts anything the webview submitted for cantidad/precioUnitario/impuestos.
 export function buildFinalCreditNote(
   data: CreditNoteXmlData,
   selectedDetalles: CreditNoteXmlDetalle[],

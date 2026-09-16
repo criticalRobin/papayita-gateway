@@ -21,6 +21,7 @@ import {
   RetryableCoreApiError,
   TerminalCoreApiError,
 } from '../../core-api/core-api.errors';
+import type { PurchasesClient } from '../../purchases/purchases-client.interface';
 import {
   InboundMessageJobDto,
   InboundMessageType,
@@ -68,6 +69,7 @@ describe('WhatsappInboundProcessor', () => {
   let mintInventoryCode: jest.Mock;
   let buildDraft: jest.Mock;
   let requestByIdentificacion: jest.Mock;
+  let registrarXml: jest.Mock;
   let client: WhatsappClient;
   let sttClient: SttClient;
   let llmClient: LlmClient;
@@ -77,6 +79,7 @@ describe('WhatsappInboundProcessor', () => {
   let webviewAuthService: WebviewAuthService;
   let draftBuilderService: DraftBuilderService;
   let creditNoteService: CreditNoteService;
+  let purchasesClient: PurchasesClient;
   let config: ConfigService;
   let processor: WhatsappInboundProcessor;
 
@@ -110,6 +113,23 @@ describe('WhatsappInboundProcessor', () => {
     requestByIdentificacion = jest
       .fn()
       .mockResolvedValue({ correlationId: 'corr-cn-1', hasCandidates: true });
+    registrarXml = jest.fn().mockResolvedValue({
+      id: 'purchase-1',
+      emisorId: 'emisor-1',
+      proveedorRuc: '1850137918001',
+      proveedorRazonSocial: 'MATIAS TITE',
+      tipoComprobante: '01',
+      establecimiento: '001',
+      puntoEmision: '001',
+      secuencial: '000000049',
+      claveAcceso: '1609202601185013791800110010010000000499131334912',
+      fechaEmision: '2026-09-16',
+      totalSinImpuestos: 194.47,
+      importeTotal: 223.65,
+      moneda: 'DOLAR',
+      totales: [],
+      createdAt: '2026-09-16T20:31:01.826Z',
+    });
     client = {
       sendTextMessage,
       sendCtaMessage,
@@ -135,6 +155,7 @@ describe('WhatsappInboundProcessor', () => {
     creditNoteService = {
       requestByIdentificacion,
     } as unknown as CreditNoteService;
+    purchasesClient = { registrarXml };
     config = {
       getOrThrow: () => 'https://webview.test',
     } as unknown as ConfigService;
@@ -148,6 +169,7 @@ describe('WhatsappInboundProcessor', () => {
       webviewAuthService,
       draftBuilderService,
       creditNoteService,
+      purchasesClient,
       config,
     );
   });
@@ -733,6 +755,89 @@ describe('WhatsappInboundProcessor', () => {
     await expect(processor.process(job)).rejects.toThrow(
       RetryableWhatsappError,
     );
+  });
+
+  describe('purchase documents', () => {
+    function documentJob(overrides: Partial<InboundMessageJobDto> = {}) {
+      return makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.doc',
+        type: InboundMessageType.DOCUMENT,
+        mediaId: 'media-doc-1',
+        fileName: 'factura-compra.xml',
+        ...overrides,
+      });
+    }
+
+    beforeEach(() => {
+      downloadMedia.mockResolvedValue({
+        buffer: Buffer.from('<factura></factura>'),
+        mimeType: 'application/xml',
+      });
+    });
+
+    it('downloads the document, registers it, and sends a one-message success summary', async () => {
+      await processor.process(documentJob());
+
+      expect(downloadMedia).toHaveBeenCalledWith('media-doc-1');
+      expect(registrarXml).toHaveBeenCalledWith(
+        'valid-token',
+        '<factura></factura>',
+      );
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('MATIAS TITE'),
+      );
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(getState).not.toHaveBeenCalled();
+      expect(classify).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-XML attachment without calling Core API', async () => {
+      downloadMedia.mockResolvedValue({
+        buffer: Buffer.from('%PDF-1.4'),
+        mimeType: 'application/pdf',
+      });
+
+      await processor.process(documentJob({ fileName: 'factura.pdf' }));
+
+      expect(registrarXml).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('XML'),
+      );
+    });
+
+    it('accepts a document by filename even with a generic mime type', async () => {
+      downloadMedia.mockResolvedValue({
+        buffer: Buffer.from('<factura></factura>'),
+        mimeType: 'application/octet-stream',
+      });
+
+      await processor.process(documentJob({ fileName: 'compra.XML' }));
+
+      expect(registrarXml).toHaveBeenCalled();
+    });
+
+    it('sends the hardcoded failure reply on a terminal Core API error', async () => {
+      registrarXml.mockRejectedValue(new TerminalCoreApiError('rejected'));
+
+      await processor.process(documentJob());
+
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('compra'),
+      );
+    });
+
+    it('propagates a retryable Core API error so BullMQ retries the whole job', async () => {
+      registrarXml.mockRejectedValue(new RetryableCoreApiError('network blip'));
+
+      await expect(processor.process(documentJob())).rejects.toThrow(
+        RetryableCoreApiError,
+      );
+      expect(sendTextMessage).not.toHaveBeenCalled();
+    });
   });
 
   describe('audio messages', () => {

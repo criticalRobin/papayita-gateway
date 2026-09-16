@@ -164,7 +164,10 @@ export class DraftBuilderService {
       items: dto.detalles.map((detalle) => ({
         productoId: detalle.selectedCandidateId as string,
         cantidad: detalle.cantidad,
-        descuento: 0,
+        descuento: detalle.descuento ?? 0,
+        ...(detalle.precioUnitarioOverride != null
+          ? { precioModificado: detalle.precioUnitarioOverride }
+          : {}),
       })),
     };
 
@@ -176,10 +179,7 @@ export class DraftBuilderService {
       );
     }
 
-    const finalDetalles = mergeProductoDetalles(
-      productoDetalles,
-      dto.detalles.map((detalle) => detalle.precioUnitarioOverride),
-    );
+    const finalDetalles = mergeProductoDetalles(productoDetalles);
 
     const finalComprador = {
       tipoIdentificacion: deriveTipoIdentificacion(

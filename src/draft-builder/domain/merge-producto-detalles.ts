@@ -7,23 +7,15 @@ import { FinalInvoiceDetalle } from './types';
 // correlation available — verify this against the real API).
 export function mergeProductoDetalles(
   productoDetalles: ProductoDetalle[],
-  precioUnitarioOverrides: (number | undefined)[],
 ): FinalInvoiceDetalle[] {
-  return productoDetalles.map((pd, index) => {
-    const precioUnitario = precioUnitarioOverrides[index] ?? pd.precioUnitario;
-
+  return productoDetalles.map((pd) => {
     const detalle: FinalInvoiceDetalle = {
       codigoPrincipal: pd.codigoPrincipal,
       descripcion: pd.descripcion,
       unidadMedida: pd.unidadMedida,
       cantidad: pd.cantidad,
-      precioUnitario,
+      precioUnitario: pd.precioUnitario,
       descuento: pd.descuento,
-      // Computed by Core API from the catalog price — if the user overrode
-      // precioUnitario above, these no longer reconcile against it. Known
-      // MVP gap: /detalles has no way to recompute tax for an overridden
-      // price. Not a real submission yet (see draft-builder.service.ts), so
-      // left as-is rather than guessed at here.
       impuestos: pd.impuestos,
     };
     if (pd.codigoAuxiliar) {

@@ -28,7 +28,7 @@ function productoDetalle(
 describe('mergeProductoDetalles', () => {
   it('maps a ProductoDetalle straight through, including impuestos', () => {
     const pd = productoDetalle();
-    const [result] = mergeProductoDetalles([pd], [undefined]);
+    const [result] = mergeProductoDetalles([pd]);
 
     expect(result).toEqual({
       codigoPrincipal: 'CONS-PS5-01',
@@ -44,23 +44,16 @@ describe('mergeProductoDetalles', () => {
 
   it('omits codigoAuxiliar when the response has none', () => {
     const pd = productoDetalle({ codigoAuxiliar: null });
-    const [result] = mergeProductoDetalles([pd], [undefined]);
+    const [result] = mergeProductoDetalles([pd]);
 
     expect(result).not.toHaveProperty('codigoAuxiliar');
   });
 
-  it('applies a precioUnitario override positionally when provided', () => {
-    const pd = productoDetalle();
-    const [result] = mergeProductoDetalles([pd], [480]);
-
-    expect(result.precioUnitario).toBe(480);
-  });
-
-  it('matches overrides to detalles by index across multiple items', () => {
+  it('maps multiple detalles in order', () => {
     const pd1 = productoDetalle({ precioUnitario: 10 });
-    const pd2 = productoDetalle({ precioUnitario: 20 });
+    const pd2 = productoDetalle({ precioUnitario: 25 });
 
-    const [r1, r2] = mergeProductoDetalles([pd1, pd2], [undefined, 25]);
+    const [r1, r2] = mergeProductoDetalles([pd1, pd2]);
 
     expect(r1.precioUnitario).toBe(10);
     expect(r2.precioUnitario).toBe(25);

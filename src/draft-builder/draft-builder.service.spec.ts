@@ -465,13 +465,17 @@ describe('DraftBuilderService', () => {
       });
     });
 
-    it('applies a precioUnitarioOverride when the user manually edited the price', async () => {
-      const { service } = makeService({
+    it('sends precioModificado to Core API when the user manually edited the price', async () => {
+      const modifiedProductoDetalle = {
+        ...ps5ProductoDetalle,
+        precioUnitario: 480,
+      };
+      const { service, catalogClient } = makeService({
         conversationStateService: {
           getState: jest.fn().mockResolvedValue(draftState()),
         },
         catalogClient: {
-          getDetalles: jest.fn().mockResolvedValue([ps5ProductoDetalle]),
+          getDetalles: jest.fn().mockResolvedValue([modifiedProductoDetalle]),
         },
       });
 
@@ -491,7 +495,54 @@ describe('DraftBuilderService', () => {
         },
       );
 
+      expect(catalogClient.getDetalles).toHaveBeenCalledWith(token, {
+        emisorId,
+        whatsapp: '+593993908744',
+        items: [
+          {
+            productoId: ps5Candidate.id,
+            cantidad: 1,
+            descuento: 0,
+            precioModificado: 480,
+          },
+        ],
+      });
       expect(invoice.detalles[0].precioUnitario).toBe(480);
+    });
+
+    it('sends a user-supplied descuento to Core API', async () => {
+      const { service, catalogClient } = makeService({
+        conversationStateService: {
+          getState: jest.fn().mockResolvedValue(draftState()),
+        },
+        catalogClient: {
+          getDetalles: jest.fn().mockResolvedValue([ps5ProductoDetalle]),
+        },
+      });
+
+      await service.confirmAndSubmit('+593993908744', 'corr-1', {
+        comprador: {},
+        detalles: [
+          {
+            idCliente: 'item-1',
+            selectedCandidateId: ps5Candidate.id,
+            cantidad: 1,
+            descuento: 10,
+          },
+        ],
+      });
+
+      expect(catalogClient.getDetalles).toHaveBeenCalledWith(token, {
+        emisorId,
+        whatsapp: '+593993908744',
+        items: [
+          {
+            productoId: ps5Candidate.id,
+            cantidad: 1,
+            descuento: 10,
+          },
+        ],
+      });
     });
   });
 });

@@ -14,6 +14,7 @@ import { PERSONA_LOOKUP_CLIENT } from '../persona/persona.module';
 import type { PersonaLookupClient } from '../persona/persona-lookup.interface';
 import { ConversationStateService } from '../conversation-state/conversation-state.service';
 import { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
+import { EmissionWatchdogService } from '../invoice-emission/emission-watchdog.service';
 import { formatFechaEmision } from '../common/format-date';
 import { CREDIT_NOTE_CLIENT } from './credit-note-client.interface';
 import type { CreditNoteClient } from './credit-note-client.interface';
@@ -39,6 +40,7 @@ export class CreditNoteService {
     @Inject(CREDIT_NOTE_CLIENT)
     private readonly creditNoteClient: CreditNoteClient,
     private readonly pendingEmissionStore: PendingEmissionStore,
+    private readonly emissionWatchdogService: EmissionWatchdogService,
     private readonly conversationStateService: ConversationStateService,
   ) {}
 
@@ -188,6 +190,15 @@ export class CreditNoteService {
     await this.pendingEmissionStore.set(emisorId, {
       phoneNumber,
       correlationId,
+    });
+
+    // If SRI/Core API never fires a webhook back (e.g. SRI itself is down),
+    // this fires instead so the user isn't left hanging indefinitely.
+    await this.emissionWatchdogService.scheduleTimeout({
+      emisorId,
+      phoneNumber,
+      correlationId,
+      tipoComprobante: '04',
     });
   }
 

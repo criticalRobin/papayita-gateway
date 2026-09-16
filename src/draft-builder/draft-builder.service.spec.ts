@@ -32,6 +32,7 @@ interface MockOverrides {
     getState?: jest.Mock;
     getPendingDocument?: jest.Mock;
   };
+  emissionWatchdogService?: { scheduleTimeout?: jest.Mock };
   config?: { getOrThrow?: jest.Mock };
 }
 
@@ -113,6 +114,10 @@ function makeService(overrides: MockOverrides = {}) {
     getPendingDocument,
     ...overrides.conversationStateService,
   } as unknown as ConversationStateService;
+  const emissionWatchdogService = {
+    scheduleTimeout: jest.fn().mockResolvedValue(undefined),
+    ...overrides.emissionWatchdogService,
+  };
   const config = {
     getOrThrow: jest.fn((key: string) => (key === 'SRI_AMBIENTE' ? '1' : '1')),
     ...overrides.config,
@@ -124,7 +129,8 @@ function makeService(overrides: MockOverrides = {}) {
     personaClient,
     emisorClient,
     invoiceEmissionClient,
-    pendingEmissionStore,
+    pendingEmissionStore as unknown as PendingEmissionStore,
+    emissionWatchdogService as unknown as EmissionWatchdogService,
     conversationStateService,
     config,
   );
@@ -137,6 +143,7 @@ function makeService(overrides: MockOverrides = {}) {
     emisorClient,
     invoiceEmissionClient,
     pendingEmissionStore,
+    emissionWatchdogService,
     conversationStateService,
     applyEvent,
     config,
@@ -404,6 +411,7 @@ describe('DraftBuilderService', () => {
         catalogClient,
         invoiceEmissionClient,
         pendingEmissionStore,
+        emissionWatchdogService,
         emisorClient,
       } = makeService({
         conversationStateService: {
@@ -446,6 +454,12 @@ describe('DraftBuilderService', () => {
         phoneNumber: '+593993908744',
         correlationId: 'corr-1',
       });
+      expect(emissionWatchdogService.scheduleTimeout).toHaveBeenCalledWith({
+        emisorId,
+        phoneNumber: '+593993908744',
+        correlationId: 'corr-1',
+        tipoComprobante: '01',
+      });
       expect(applyEvent).toHaveBeenCalledWith('+593993908744', {
         type: 'WEBVIEW_CONFIRMED',
       });
@@ -457,7 +471,12 @@ describe('DraftBuilderService', () => {
 
     it('resets the conversation to idle and rethrows when Core API rejects the emission', async () => {
       const emitError = new Error('Core API call rejected (status 400)');
-      const { service, applyEvent, pendingEmissionStore } = makeService({
+      const {
+        service,
+        applyEvent,
+        pendingEmissionStore,
+        emissionWatchdogService,
+      } = makeService({
         conversationStateService: {
           getState: jest.fn().mockResolvedValue(draftState()),
         },
@@ -483,6 +502,7 @@ describe('DraftBuilderService', () => {
       ).rejects.toThrow(emitError);
 
       expect(pendingEmissionStore.set).not.toHaveBeenCalled();
+      expect(emissionWatchdogService.scheduleTimeout).not.toHaveBeenCalled();
       expect(applyEvent).toHaveBeenCalledWith('+593993908744', {
         type: 'WEBHOOK_RECEIVED',
       });

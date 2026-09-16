@@ -13,6 +13,7 @@ import { createIdleRecord } from '../../conversation-state/domain/state-machine'
 import type { AuthService } from '../../auth/auth.service';
 import type { WebviewAuthService } from '../../webview-auth/webview-auth.service';
 import type { DraftBuilderService } from '../../draft-builder/draft-builder.service';
+import { UnresolvedCatalogItemsError } from '../../draft-builder/domain/errors';
 import type { CreditNoteService } from '../../credit-note/credit-note.service';
 import type { LlmClient } from '../../extraction/llm-client.interface';
 import { ExtractionParseError } from '../../extraction/extraction.errors';
@@ -317,8 +318,13 @@ describe('WhatsappInboundProcessor', () => {
   });
 
   describe('administrar productos', () => {
-    it('mints an inventory code and sends a CTA, skipping classification, when authenticated', async () => {
+    it('mints an inventory code and sends a CTA via the manage_inventory intent, when authenticated', async () => {
       getValidToken.mockResolvedValue('valid-token');
+      classify.mockResolvedValue({
+        category: 'manage_inventory',
+        confidence: 1,
+        method: 'rule',
+      });
       const job = makeJob({
         phoneNumber: '5219999999999',
         whatsappMessageId: 'wamid.inventory',
@@ -328,6 +334,7 @@ describe('WhatsappInboundProcessor', () => {
 
       await processor.process(job);
 
+      expect(classify).toHaveBeenCalledWith('administrar productos');
       expect(mintInventoryCode).toHaveBeenCalledWith('5219999999999');
       expect(sendCtaMessage).toHaveBeenCalledWith(
         '5219999999999',
@@ -335,12 +342,16 @@ describe('WhatsappInboundProcessor', () => {
         expect.any(String),
         'https://webview.test/inventory?code=inventory-code-1',
       );
-      expect(classify).not.toHaveBeenCalled();
       expect(sendTextMessage).not.toHaveBeenCalled();
     });
 
-    it('recognizes "administrar inventario" as an alias', async () => {
+    it('recognizes "administrar inventario" as an alias via the same intent', async () => {
       getValidToken.mockResolvedValue('valid-token');
+      classify.mockResolvedValue({
+        category: 'manage_inventory',
+        confidence: 1,
+        method: 'rule',
+      });
       const job = makeJob({
         phoneNumber: '5219999999999',
         whatsappMessageId: 'wamid.inventory-alias',
@@ -472,6 +483,30 @@ describe('WhatsappInboundProcessor', () => {
       expect(sendTextMessage).toHaveBeenCalledWith(
         '5219999999999',
         expect.stringContaining('facturación'),
+      );
+    });
+
+    it('sends a text reply naming the missing products (no CTA) when draft-builder finds zero catalog candidates for an item', async () => {
+      buildDraft.mockRejectedValue(
+        new UnresolvedCatalogItemsError(['pan de yuca', 'colada morada']),
+      );
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.billing-unresolved',
+        type: InboundMessageType.TEXT,
+        text: '2 panes de yuca y una colada morada',
+      });
+
+      await processor.process(job);
+
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('pan de yuca'),
+      );
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('colada morada'),
       );
     });
 

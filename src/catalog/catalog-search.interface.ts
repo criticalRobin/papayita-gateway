@@ -22,6 +22,7 @@ export interface ProductoDetalleRequestItem {
   productoId: string;
   cantidad: number;
   descuento?: number;
+  precioModificado?: number;
 }
 
 export interface ImpuestoDetalle {

@@ -21,6 +21,7 @@ import type { EmisorClient } from '../emisor/emisor-client.interface';
 import { INVOICE_EMISSION_CLIENT } from '../invoice-emission/invoice-emission.module';
 import type { InvoiceEmissionClient } from '../invoice-emission/invoice-emission-client.interface';
 import { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
+import { EmissionWatchdogService } from '../invoice-emission/emission-watchdog.service';
 import { ConversationStateService } from '../conversation-state/conversation-state.service';
 import type { ExtractedBillingAttempt } from '../extraction/domain/types';
 import { buildSkeleton } from './domain/build-skeleton';
@@ -31,6 +32,8 @@ import {
 import { resolveCandidates } from './domain/resolve-candidates';
 import { mergeCatalogResults } from './domain/merge-catalog-results';
 import { mergeProductoDetalles } from './domain/merge-producto-detalles';
+import { findUnresolvedItems } from './domain/find-unresolved-items';
+import { UnresolvedCatalogItemsError } from './domain/errors';
 import { assembleInvoice } from './domain/assemble-invoice';
 import { CandidateResolution, Draft, FinalInvoice } from './domain/types';
 import { ConfirmDraftDto } from './dto/confirm-draft.dto';
@@ -52,6 +55,7 @@ export class DraftBuilderService {
     @Inject(INVOICE_EMISSION_CLIENT)
     private readonly invoiceEmissionClient: InvoiceEmissionClient,
     private readonly pendingEmissionStore: PendingEmissionStore,
+    private readonly emissionWatchdogService: EmissionWatchdogService,
     private readonly conversationStateService: ConversationStateService,
     private readonly config: ConfigService,
   ) {}
@@ -97,6 +101,15 @@ export class DraftBuilderService {
     );
 
     const items = mergeCatalogResults(extracted.items, resolutionByIdCliente);
+
+    const unresolved = findUnresolvedItems(items);
+    if (unresolved.length > 0) {
+      // Never send a partial-catalog draft — the webview has nothing to
+      // offer for a zero-candidate item, so don't move state past idle.
+      throw new UnresolvedCatalogItemsError(
+        unresolved.map((item) => item.textoConsulta),
+      );
+    }
 
     const correlationId = randomUUID();
     const draft: Draft = {
@@ -164,7 +177,10 @@ export class DraftBuilderService {
       items: dto.detalles.map((detalle) => ({
         productoId: detalle.selectedCandidateId as string,
         cantidad: detalle.cantidad,
-        descuento: 0,
+        descuento: detalle.descuento ?? 0,
+        ...(detalle.precioUnitarioOverride != null
+          ? { precioModificado: detalle.precioUnitarioOverride }
+          : {}),
       })),
     };
 
@@ -176,10 +192,7 @@ export class DraftBuilderService {
       );
     }
 
-    const finalDetalles = mergeProductoDetalles(
-      productoDetalles,
-      dto.detalles.map((detalle) => detalle.precioUnitarioOverride),
-    );
+    const finalDetalles = mergeProductoDetalles(productoDetalles);
 
     const finalComprador = {
       tipoIdentificacion: deriveTipoIdentificacion(
@@ -233,6 +246,15 @@ export class DraftBuilderService {
     await this.pendingEmissionStore.set(emisorId, {
       phoneNumber,
       correlationId,
+    });
+
+    // If SRI/Core API never fires a webhook back (e.g. SRI itself is down),
+    // this fires instead so the user isn't left hanging indefinitely.
+    await this.emissionWatchdogService.scheduleTimeout({
+      emisorId,
+      phoneNumber,
+      correlationId,
+      tipoComprobante: '01',
     });
 
     return invoice;

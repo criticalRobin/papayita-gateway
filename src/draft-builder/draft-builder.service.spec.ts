@@ -5,8 +5,11 @@ import {
 } from '@nestjs/common';
 import type { AuthService } from '../auth/auth.service';
 import type { ConversationStateService } from '../conversation-state/conversation-state.service';
+import type { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
+import type { EmissionWatchdogService } from '../invoice-emission/emission-watchdog.service';
 import type { ConfigService } from '@nestjs/config';
 import { DraftBuilderService } from './draft-builder.service';
+import { UnresolvedCatalogItemsError } from './domain/errors';
 import { FormaPago } from './domain/types';
 
 // Loose mock shapes (not Partial<RealService>) — referencing a real class's
@@ -29,6 +32,7 @@ interface MockOverrides {
     getState?: jest.Mock;
     getPendingDocument?: jest.Mock;
   };
+  emissionWatchdogService?: { scheduleTimeout?: jest.Mock };
   config?: { getOrThrow?: jest.Mock };
 }
 
@@ -110,6 +114,10 @@ function makeService(overrides: MockOverrides = {}) {
     getPendingDocument,
     ...overrides.conversationStateService,
   } as unknown as ConversationStateService;
+  const emissionWatchdogService = {
+    scheduleTimeout: jest.fn().mockResolvedValue(undefined),
+    ...overrides.emissionWatchdogService,
+  };
   const config = {
     getOrThrow: jest.fn((key: string) => (key === 'SRI_AMBIENTE' ? '1' : '1')),
     ...overrides.config,
@@ -121,7 +129,8 @@ function makeService(overrides: MockOverrides = {}) {
     personaClient,
     emisorClient,
     invoiceEmissionClient,
-    pendingEmissionStore,
+    pendingEmissionStore as unknown as PendingEmissionStore,
+    emissionWatchdogService as unknown as EmissionWatchdogService,
     conversationStateService,
     config,
   );
@@ -134,6 +143,7 @@ function makeService(overrides: MockOverrides = {}) {
     emisorClient,
     invoiceEmissionClient,
     pendingEmissionStore,
+    emissionWatchdogService,
     conversationStateService,
     applyEvent,
     config,
@@ -227,6 +237,26 @@ describe('DraftBuilderService', () => {
       await expect(
         service.buildDraft('+593993908744', extracted),
       ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('throws UnresolvedCatalogItemsError and does not store DRAFT_READY when a term has zero catalog candidates', async () => {
+      const { service, applyEvent } = makeService({
+        catalogClient: {
+          searchBatch: jest
+            .fn()
+            .mockResolvedValue([{ termino: 'play station 5', productos: [] }]),
+        },
+      });
+
+      const error = await service
+        .buildDraft('+593993908744', extracted)
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(UnresolvedCatalogItemsError);
+      expect((error as UnresolvedCatalogItemsError).missingTerms).toEqual([
+        'play station 5',
+      ]);
+      expect(applyEvent).not.toHaveBeenCalled();
     });
   });
 
@@ -381,6 +411,7 @@ describe('DraftBuilderService', () => {
         catalogClient,
         invoiceEmissionClient,
         pendingEmissionStore,
+        emissionWatchdogService,
         emisorClient,
       } = makeService({
         conversationStateService: {
@@ -423,6 +454,12 @@ describe('DraftBuilderService', () => {
         phoneNumber: '+593993908744',
         correlationId: 'corr-1',
       });
+      expect(emissionWatchdogService.scheduleTimeout).toHaveBeenCalledWith({
+        emisorId,
+        phoneNumber: '+593993908744',
+        correlationId: 'corr-1',
+        tipoComprobante: '01',
+      });
       expect(applyEvent).toHaveBeenCalledWith('+593993908744', {
         type: 'WEBVIEW_CONFIRMED',
       });
@@ -434,7 +471,12 @@ describe('DraftBuilderService', () => {
 
     it('resets the conversation to idle and rethrows when Core API rejects the emission', async () => {
       const emitError = new Error('Core API call rejected (status 400)');
-      const { service, applyEvent, pendingEmissionStore } = makeService({
+      const {
+        service,
+        applyEvent,
+        pendingEmissionStore,
+        emissionWatchdogService,
+      } = makeService({
         conversationStateService: {
           getState: jest.fn().mockResolvedValue(draftState()),
         },
@@ -460,18 +502,23 @@ describe('DraftBuilderService', () => {
       ).rejects.toThrow(emitError);
 
       expect(pendingEmissionStore.set).not.toHaveBeenCalled();
+      expect(emissionWatchdogService.scheduleTimeout).not.toHaveBeenCalled();
       expect(applyEvent).toHaveBeenCalledWith('+593993908744', {
         type: 'WEBHOOK_RECEIVED',
       });
     });
 
-    it('applies a precioUnitarioOverride when the user manually edited the price', async () => {
-      const { service } = makeService({
+    it('sends precioModificado to Core API when the user manually edited the price', async () => {
+      const modifiedProductoDetalle = {
+        ...ps5ProductoDetalle,
+        precioUnitario: 480,
+      };
+      const { service, catalogClient } = makeService({
         conversationStateService: {
           getState: jest.fn().mockResolvedValue(draftState()),
         },
         catalogClient: {
-          getDetalles: jest.fn().mockResolvedValue([ps5ProductoDetalle]),
+          getDetalles: jest.fn().mockResolvedValue([modifiedProductoDetalle]),
         },
       });
 
@@ -491,7 +538,54 @@ describe('DraftBuilderService', () => {
         },
       );
 
+      expect(catalogClient.getDetalles).toHaveBeenCalledWith(token, {
+        emisorId,
+        whatsapp: '+593993908744',
+        items: [
+          {
+            productoId: ps5Candidate.id,
+            cantidad: 1,
+            descuento: 0,
+            precioModificado: 480,
+          },
+        ],
+      });
       expect(invoice.detalles[0].precioUnitario).toBe(480);
+    });
+
+    it('sends a user-supplied descuento to Core API', async () => {
+      const { service, catalogClient } = makeService({
+        conversationStateService: {
+          getState: jest.fn().mockResolvedValue(draftState()),
+        },
+        catalogClient: {
+          getDetalles: jest.fn().mockResolvedValue([ps5ProductoDetalle]),
+        },
+      });
+
+      await service.confirmAndSubmit('+593993908744', 'corr-1', {
+        comprador: {},
+        detalles: [
+          {
+            idCliente: 'item-1',
+            selectedCandidateId: ps5Candidate.id,
+            cantidad: 1,
+            descuento: 10,
+          },
+        ],
+      });
+
+      expect(catalogClient.getDetalles).toHaveBeenCalledWith(token, {
+        emisorId,
+        whatsapp: '+593993908744',
+        items: [
+          {
+            productoId: ps5Candidate.id,
+            cantidad: 1,
+            descuento: 10,
+          },
+        ],
+      });
     });
   });
 });

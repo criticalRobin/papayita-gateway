@@ -49,6 +49,17 @@ export const envSchema = z.object({
     .positive()
     .default(3600),
 
+  // How long to wait for Core API's comprobante.autorizado/rechazado webhook
+  // after a successful emitir() call before telling the user we couldn't
+  // confirm it (e.g. SRI itself is down and Core API's internal job never
+  // resolves). Must stay comfortably under CONVERSATION_STATE_TTL_SECONDS so
+  // the watchdog notifies the user before Redis silently expires the state.
+  EMISSION_CONFIRMATION_TIMEOUT_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(300),
+
   // Categories + products, 24h safety-net TTL — refreshed on every write
   // regardless, this only matters if a cache entry is never written to.
   INVENTORY_CACHE_TTL_SECONDS: z.coerce

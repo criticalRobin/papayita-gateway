@@ -49,6 +49,10 @@ export class ConfirmDetalleDto {
   @IsOptional()
   @IsNumber()
   precioUnitarioOverride?: number;
+
+  @IsOptional()
+  @IsNumber()
+  descuento?: number;
 }
 
 export class ConfirmDraftDto {

@@ -4,6 +4,7 @@ import { Job } from 'bullmq';
 import { AuthService } from '../../auth/auth.service';
 import { ConversationStateService } from '../../conversation-state/conversation-state.service';
 import { CoreApiWebhookDto } from '../../core-api/webhook/dto/core-api-webhook.dto';
+import { EmissionTimeoutJobDto } from '../../invoice-emission/dto/emission-timeout-job.dto';
 import { formatRejectionMessage } from '../../invoice-emission/domain/format-rejection-message';
 import { INVOICE_EMISSION_CLIENT } from '../../invoice-emission/invoice-emission.module';
 import type { InvoiceEmissionClient } from '../../invoice-emission/invoice-emission-client.interface';
@@ -50,8 +51,14 @@ export class InvoiceEmissionProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<CoreApiWebhookDto>): Promise<void> {
-    const { evento, payload } = job.data;
+  async process(
+    job: Job<CoreApiWebhookDto | EmissionTimeoutJobDto>,
+  ): Promise<void> {
+    if (job.name === 'emission-timeout') {
+      return this.processTimeout(job as Job<EmissionTimeoutJobDto>);
+    }
+
+    const { evento, payload } = (job as Job<CoreApiWebhookDto>).data;
     const pending = await this.pendingEmissionStore.get(payload.emisorId);
 
     if (!pending) {
@@ -122,17 +129,63 @@ export class InvoiceEmissionProcessor extends WorkerHost {
     await this.whatsappClient.sendTextMessage(phoneNumber, message);
   }
 
+  // Fires when no comprobante.autorizado/rechazado webhook ever arrived for an
+  // emission — the pending record set right after emitir() is still there
+  // untouched, meaning nothing cleared it in the meantime. Reuses the same
+  // escalationReply wording as the retries-exhausted path below: from the
+  // user's perspective both are "we couldn't confirm your document."
+  private async processTimeout(job: Job<EmissionTimeoutJobDto>): Promise<void> {
+    const { emisorId, phoneNumber, correlationId, tipoComprobante } = job.data;
+    const pending = await this.pendingEmissionStore.get(emisorId);
+    if (!pending || pending.correlationId !== correlationId) {
+      // Webhook already arrived and cleared it, or a newer emission for the
+      // same emisorId superseded this one — see PendingEmissionStore's
+      // known emisorId-only limitation.
+      return;
+    }
+
+    this.logger.error(
+      `emission confirmation timed out for emisorId=${maskTail(emisorId)}, correlationId=${correlationId} — no SRI webhook arrived`,
+    );
+
+    try {
+      await this.whatsappClient.sendTextMessage(
+        phoneNumber,
+        escalationReply(tipoComprobante),
+      );
+    } catch (error) {
+      this.logger.error(
+        `timeout escalation message also failed for ${maskTail(phoneNumber)}: ${error}`,
+      );
+    } finally {
+      await this.pendingEmissionStore.clear(emisorId);
+      await this.conversationStateService.applyEvent(phoneNumber, {
+        type: 'WEBHOOK_RECEIVED',
+      });
+    }
+  }
+
   // Best-effort escalation: once retries are exhausted, make sure the customer isn't left
   // hanging silently (message-budget rules still require exactly one result message).
   @OnWorkerEvent('failed')
-  async onFailed(job: Job<CoreApiWebhookDto>): Promise<void> {
-    const attempts = job.opts.attempts ?? 1;
-    if (job.attemptsMade < attempts) {
+  async onFailed(
+    job: Job<CoreApiWebhookDto | EmissionTimeoutJobDto>,
+  ): Promise<void> {
+    if (job.name === 'emission-timeout') {
+      // processTimeout() already sends its own escalation/cleanup in a
+      // try/finally regardless of outcome — nothing extra to do if the job
+      // itself still fails (e.g. Redis unreachable).
+      return;
+    }
+    const webhookJob = job as Job<CoreApiWebhookDto>;
+
+    const attempts = webhookJob.opts.attempts ?? 1;
+    if (webhookJob.attemptsMade < attempts) {
       return;
     }
 
     const pending = await this.pendingEmissionStore.get(
-      job.data.payload.emisorId,
+      webhookJob.data.payload.emisorId,
     );
     if (!pending) {
       return;
@@ -141,14 +194,14 @@ export class InvoiceEmissionProcessor extends WorkerHost {
     try {
       await this.whatsappClient.sendTextMessage(
         pending.phoneNumber,
-        escalationReply(job.data.payload.tipoComprobante),
+        escalationReply(webhookJob.data.payload.tipoComprobante),
       );
     } catch (error) {
       this.logger.error(
         `escalation message also failed for ${maskTail(pending.phoneNumber)}: ${error}`,
       );
     } finally {
-      await this.pendingEmissionStore.clear(job.data.payload.emisorId);
+      await this.pendingEmissionStore.clear(webhookJob.data.payload.emisorId);
       await this.conversationStateService.applyEvent(pending.phoneNumber, {
         type: 'WEBHOOK_RECEIVED',
       });

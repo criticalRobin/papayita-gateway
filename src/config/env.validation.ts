@@ -40,6 +40,13 @@ export const envSchema = z.object({
   WEBVIEW_BASE_URL: z.string().url(),
   LOGIN_CODE_TTL_SECONDS: z.coerce.number().int().positive().default(900),
 
+  // How many times a single draft-confirmation exchange code can be
+  // consumed before it's burned — covers reopening the CTA link after
+  // accidentally closing the webview mid-review. Still bounded by
+  // CONVERSATION_STATE_TTL_SECONDS regardless, and killed outright on
+  // confirm via killExchangeCodeForCorrelation.
+  EXCHANGE_CODE_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
+
   SRI_AMBIENTE: z.string().min(1).default('1'),
   SRI_TIPO_EMISION: z.string().min(1).default('1'),
 

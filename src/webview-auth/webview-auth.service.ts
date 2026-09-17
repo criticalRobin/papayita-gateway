@@ -11,6 +11,7 @@ export const WEBVIEW_AUTH_REDIS_CLIENT = 'WEBVIEW_AUTH_REDIS_CLIENT';
 interface ExchangeCodePayload {
   phoneNumber: string;
   correlationId: string;
+  attemptsRemaining: number;
 }
 
 export interface ConsumedExchangeCode {
@@ -74,44 +75,87 @@ export class WebviewAuthService {
     return phoneNumber;
   }
 
-  // Draft-confirmation CTA: scoped to one phone + correlationId, single-use,
-  // same TTL as the conversation-state record it points to.
+  // Draft-confirmation CTA: scoped to one phone + correlationId, same TTL as
+  // the conversation-state record it points to. Reusable up to
+  // EXCHANGE_CODE_MAX_ATTEMPTS times (default 3) so accidentally closing the
+  // webview before confirming doesn't dead-end the CTA link — killed outright
+  // on confirm via killExchangeCodeForCorrelation, or once attempts run out.
   async mintExchangeCode(
     phoneNumber: string,
     correlationId: string,
   ): Promise<string> {
     const code = randomUUID();
     const ttl = this.config.get<number>('CONVERSATION_STATE_TTL_SECONDS', 900);
-    const payload: ExchangeCodePayload = { phoneNumber, correlationId };
+    const maxAttempts = this.config.get<number>(
+      'EXCHANGE_CODE_MAX_ATTEMPTS',
+      3,
+    );
+    const payload: ExchangeCodePayload = {
+      phoneNumber,
+      correlationId,
+      attemptsRemaining: maxAttempts,
+    };
     await this.redis.set(
       this.exchangeKey(code),
       JSON.stringify(payload),
       'EX',
       ttl,
     );
+    // Reverse index so killExchangeCodeForCorrelation can burn the code from
+    // the confirm path, which only knows correlationId, not the original code.
+    await this.redis.set(this.exchangeIdxKey(correlationId), code, 'EX', ttl);
     return code;
   }
 
-  // Single-use — deleted on read. On success, mints the webview session token
-  // the caller will hand back to the webview alongside the draft.
+  // Decrements attemptsRemaining on each read instead of deleting outright.
+  // On success, mints the webview session token the caller will hand back to
+  // the webview alongside the draft.
   async consumeExchangeCode(
     code: string,
   ): Promise<ConsumedExchangeCode | null> {
     const raw = await this.redis.get(this.exchangeKey(code));
     if (!raw) return null;
-    await this.redis.del(this.exchangeKey(code));
 
-    const { phoneNumber, correlationId } = JSON.parse(
-      raw,
-    ) as ExchangeCodePayload;
+    const payload = JSON.parse(raw) as ExchangeCodePayload;
+    if (payload.attemptsRemaining <= 0) {
+      await this.redis.del(this.exchangeKey(code));
+      return null;
+    }
+
+    payload.attemptsRemaining -= 1;
+    if (payload.attemptsRemaining <= 0) {
+      await this.redis.del(this.exchangeKey(code));
+    } else {
+      // KEEPTTL: don't reset the countdown on every reopen — still bounded by
+      // the original draft TTL.
+      await this.redis.set(
+        this.exchangeKey(code),
+        JSON.stringify(payload),
+        'KEEPTTL',
+      );
+    }
+
+    const { phoneNumber, correlationId } = payload;
     const sessionToken = await this.webviewSessionService.createSession({
       phoneNumber,
       correlationId,
     });
     this.logger.log(
-      `exchange code consumed for phone=${maskTail(phoneNumber)}, correlationId=${correlationId}`,
+      `exchange code consumed for phone=${maskTail(phoneNumber)}, correlationId=${correlationId}, attemptsRemaining=${payload.attemptsRemaining}`,
     );
     return { phoneNumber, correlationId, sessionToken };
+  }
+
+  // Burns the exchange code immediately once the draft is actually
+  // confirmed, instead of waiting for remaining attempts or TTL to expire —
+  // so a stale tab can't replay it after submission.
+  async killExchangeCodeForCorrelation(correlationId: string): Promise<void> {
+    const code = await this.redis.get(this.exchangeIdxKey(correlationId));
+    if (!code) return;
+    await Promise.all([
+      this.redis.del(this.exchangeKey(code)),
+      this.redis.del(this.exchangeIdxKey(correlationId)),
+    ]);
   }
 
   private loginKey(code: string): string {
@@ -124,5 +168,9 @@ export class WebviewAuthService {
 
   private exchangeKey(code: string): string {
     return `webview-exchange:${code}`;
+  }
+
+  private exchangeIdxKey(correlationId: string): string {
+    return `webview-exchange-idx:${correlationId}`;
   }
 }

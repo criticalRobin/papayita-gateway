@@ -7,11 +7,9 @@ import {
   Post,
   Query,
   Req,
-  ValidationPipe,
 } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
-import { WhatsappWebhookPayloadDto } from './dto/whatsapp-webhook.dto';
 import { WebhookService } from './webhook.service';
 
 @Controller('webhook/whatsapp')
@@ -32,18 +30,16 @@ export class WebhookController {
   async receive(
     @Req() req: RawBodyRequest<Request>,
     @Headers('x-hub-signature-256') signature: string | undefined,
-    // Meta's payload grows new fields/message types over time — whitelist+strip here instead of
-    // the app-wide forbidNonWhitelisted, so schema drift on their side doesn't 400 a webhook Meta expects fast 2xx from.
-    @Body(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: false,
-        transform: true,
-      }),
-    )
-    payload: WhatsappWebhookPayloadDto,
+    // Typed `unknown` (not the DTO class) so the app-wide forbidNonWhitelisted
+    // ValidationPipe (main.ts) skips this param instead of double-validating it —
+    // webhookService.parsePayload does the (relaxed) validation itself. Meta's
+    // payload grows new fields/message types over time; we whitelist+strip
+    // instead of rejecting, so schema drift on their side doesn't 400 a webhook
+    // Meta expects a fast 2xx from.
+    @Body() rawPayload: unknown,
   ): Promise<{ status: string }> {
     this.webhookService.verifySignature(req.rawBody, signature);
+    const payload = await this.webhookService.parsePayload(rawPayload);
     await this.webhookService.handlePayload(payload);
     return { status: 'ok' };
   }

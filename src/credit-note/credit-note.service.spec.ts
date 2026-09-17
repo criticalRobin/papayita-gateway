@@ -5,6 +5,7 @@ import type { PersonaLookupClient } from '../persona/persona-lookup.interface';
 import type { ConversationStateService } from '../conversation-state/conversation-state.service';
 import type { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
 import type { EmissionWatchdogService } from '../invoice-emission/emission-watchdog.service';
+import type { WebviewAuthService } from '../webview-auth/webview-auth.service';
 import { CreditNoteService } from './credit-note.service';
 import type { CreditNoteClient } from './credit-note-client.interface';
 import { CreditNoteCandidatesDocument } from './domain/types';
@@ -27,6 +28,7 @@ interface MockOverrides {
     applyEvent?: jest.Mock;
     getPendingDocument?: jest.Mock;
   };
+  webviewAuthService?: { killExchangeCodeForCorrelation?: jest.Mock };
 }
 
 const token = 'access-1';
@@ -144,6 +146,10 @@ function makeService(overrides: MockOverrides = {}) {
     getPendingDocument: jest.fn().mockResolvedValue(candidatesDocument),
     ...overrides.conversationStateService,
   } as unknown as ConversationStateService;
+  const webviewAuthService = {
+    killExchangeCodeForCorrelation: jest.fn().mockResolvedValue(undefined),
+    ...overrides.webviewAuthService,
+  };
 
   const service = new CreditNoteService(
     authService,
@@ -153,9 +159,10 @@ function makeService(overrides: MockOverrides = {}) {
     pendingEmissionStore,
     emissionWatchdogService,
     conversationStateService,
+    webviewAuthService as unknown as WebviewAuthService,
   );
 
-  return { service, emitir, conversationStateService };
+  return { service, emitir, conversationStateService, webviewAuthService };
 }
 
 describe('CreditNoteService.confirmAndSubmit', () => {
@@ -185,7 +192,7 @@ describe('CreditNoteService.confirmAndSubmit', () => {
   });
 
   it('submits the original figures unchanged when the full cantidad is selected', async () => {
-    const { service, emitir } = makeService();
+    const { service, emitir, webviewAuthService } = makeService();
 
     await service.confirmAndSubmit(phoneNumber, correlationId, makeDto());
 
@@ -203,6 +210,9 @@ describe('CreditNoteService.confirmAndSubmit', () => {
         ],
       }),
     );
+    expect(
+      webviewAuthService.killExchangeCodeForCorrelation,
+    ).toHaveBeenCalledWith(correlationId);
   });
 
   it('rejects a cantidad greater than the original invoiced quantity', async () => {

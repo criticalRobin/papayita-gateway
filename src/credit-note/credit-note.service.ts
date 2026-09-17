@@ -13,6 +13,7 @@ import type { EmisorClient } from '../emisor/emisor-client.interface';
 import { PERSONA_LOOKUP_CLIENT } from '../persona/persona.module';
 import type { PersonaLookupClient } from '../persona/persona-lookup.interface';
 import { ConversationStateService } from '../conversation-state/conversation-state.service';
+import { WebviewAuthService } from '../webview-auth/webview-auth.service';
 import { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
 import { EmissionWatchdogService } from '../invoice-emission/emission-watchdog.service';
 import { formatFechaEmision } from '../common/format-date';
@@ -43,6 +44,7 @@ export class CreditNoteService {
     private readonly pendingEmissionStore: PendingEmissionStore,
     private readonly emissionWatchdogService: EmissionWatchdogService,
     private readonly conversationStateService: ConversationStateService,
+    private readonly webviewAuthService: WebviewAuthService,
   ) {}
 
   async requestByIdentificacion(
@@ -180,6 +182,9 @@ export class CreditNoteService {
     await this.conversationStateService.applyEvent(phoneNumber, {
       type: 'WEBVIEW_CONFIRMED',
     });
+    // Draft actually confirmed — burn the exchange code so a stale/reopened
+    // tab can't replay this CTA link anymore.
+    await this.webviewAuthService.killExchangeCodeForCorrelation(correlationId);
 
     try {
       await this.creditNoteClient.emitir(token, finalCreditNote);

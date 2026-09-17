@@ -1,5 +1,10 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -74,6 +79,25 @@ export class WebhookService {
     ) {
       throw new ForbiddenException('signature mismatch');
     }
+  }
+
+  // whitelist:true strips fields the DTO doesn't model; forbidNonWhitelisted:false means
+  // that stripping never throws — only real structural mismatches (wrong types, missing
+  // required fields) do. Meta grows the payload shape over time; we shouldn't 400 (and
+  // have Meta retry) just because it added a field we don't care about.
+  async parsePayload(raw: unknown): Promise<WhatsappWebhookPayloadDto> {
+    const payload = plainToInstance(WhatsappWebhookPayloadDto, raw);
+    const errors = await validate(payload, {
+      whitelist: true,
+      forbidNonWhitelisted: false,
+    });
+    if (errors.length > 0) {
+      this.logger.error(
+        `rejecting malformed webhook payload: ${errors.map((e) => e.property).join(', ')}`,
+      );
+      throw new BadRequestException('invalid webhook payload');
+    }
+    return payload;
   }
 
   async handlePayload(payload: WhatsappWebhookPayloadDto): Promise<void> {

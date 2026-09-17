@@ -22,6 +22,8 @@ import { UnresolvedCatalogItemsError } from '../../draft-builder/domain/errors';
 import { CreditNoteService } from '../../credit-note/credit-note.service';
 import { ExtractionParseError } from '../../extraction/extraction.errors';
 import { TerminalCoreApiError } from '../../core-api/core-api.errors';
+import { PlanGateService } from '../../plan-gate/plan-gate.service';
+import { PlanGateBlockedError } from '../../plan-gate/plan-gate.errors';
 import {
   InboundMessageJobDto,
   InboundMessageType,
@@ -75,6 +77,40 @@ const PURCHASE_FAILURE_REPLY =
   'No pudimos registrar tu compra, por favor verifica el XML e intenta de nuevo.';
 const PURCHASE_SUCCESS_REPLY = (response: PurchaseRegisteredResponse): string =>
   `Compra registrada: ${response.proveedorRazonSocial}, comprobante ${response.establecimiento}-${response.puntoEmision}-${response.secuencial}, total $${response.importeTotal.toFixed(2)}.`;
+const PLAN_LIMIT_REPLY =
+  'Alcanzaste el límite de comprobantes de tu plan este mes. Contáctanos para cambiar de plan o activar facturación bajo consumo.';
+const NOT_READY_REPLY =
+  'Tu cuenta aún no está lista para facturar. Contáctanos para revisar tu configuración.';
+const CREDIT_NOTE_PLAN_REPLY =
+  'Las notas de crédito no están disponibles en tu plan actual. Contáctanos para actualizar tu plan.';
+const PRODUCT_MANAGEMENT_PLAN_REPLY =
+  'La administración de productos no está disponible en tu plan actual. Contáctanos para actualizar tu plan.';
+const PURCHASE_REGISTRATION_PLAN_REPLY =
+  'El registro de compras no está disponible en tu plan actual. Contáctanos para actualizar tu plan.';
+const INVENTORY_FAILURE_REPLY =
+  'No pudimos abrir tu inventario, por favor intenta de nuevo.';
+const HELP_REPLY = `🧾 *¿Qué puedo hacer por ti?*
+
+*1. Facturar* 🧾
+Escríbeme o mándame una nota de voz con los datos de tu venta.
+Ejemplo: "Vendí 2 panes a 0.50 y una cola a 1.00 al cliente 1850137918"
+
+*2. Nota de crédito* ↩️
+Dime la cédula o RUC del cliente y te muestro sus facturas.
+Ejemplo: "Nota de crédito para el cliente 1850137918"
+
+*3. Administrar productos* 📦
+Escribe "administrar productos" para editar tu catálogo e inventario.
+
+*4. Registrar una compra* 📄
+Envía el archivo XML de tu factura de compra como documento adjunto.
+
+*Otros comandos*
+• "iniciar sesión" → vincula tu cuenta de WhatsApp
+• "cerrar sesión" → cierra tu sesión
+• "ayuda" → muestra este mensaje otra vez
+
+Si una función no está disponible, revisa tu plan o contáctanos para más información.`;
 
 // Accent-insensitive: typing "sesion" without the tilde on a phone keyboard
 // is common. "login" is accepted as a plain-English fallback.
@@ -96,6 +132,16 @@ function isLogoutCommand(text: string | undefined): boolean {
     .trim()
     .toLowerCase();
   return normalized === 'cerrar sesion' || normalized === 'logout';
+}
+
+function isHelpCommand(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase();
+  return normalized === 'ayuda' || normalized === 'help' || normalized === '?';
 }
 
 // buildReply()/buildClassifiedReply()/buildAudioReply() return one of these:
@@ -122,6 +168,7 @@ export class WhatsappInboundProcessor extends WorkerHost {
     private readonly draftBuilderService: DraftBuilderService,
     private readonly creditNoteService: CreditNoteService,
     @Inject(PURCHASES_CLIENT) private readonly purchasesClient: PurchasesClient,
+    private readonly planGateService: PlanGateService,
     private readonly config: ConfigService,
   ) {
     super();
@@ -138,6 +185,16 @@ export class WhatsappInboundProcessor extends WorkerHost {
     // authenticated, never NOT_AUTHENTICATED_REPLY/login-CTA. No LLM cost.
     if (type === InboundMessageType.TEXT && isLogoutCommand(text)) {
       await this.handleLogoutCommand(phoneNumber, job.id);
+      return;
+    }
+
+    // "ayuda" also runs before the auth gate — a user should be able to see
+    // what the bot can do whether or not they're logged in yet. Always the
+    // same hardcoded guide text, no LLM cost.
+    if (type === InboundMessageType.TEXT && isHelpCommand(text)) {
+      await this.sendOrLogTerminal(job.id, () =>
+        this.whatsappClient.sendTextMessage(phoneNumber, HELP_REPLY),
+      );
       return;
     }
 
@@ -202,6 +259,39 @@ export class WhatsappInboundProcessor extends WorkerHost {
     phoneNumber: string,
     jobId: string | number | undefined,
   ): Promise<void> {
+    try {
+      await this.planGateService.assertFeatureAllowed(
+        phoneNumber,
+        'PRODUCT_MANAGEMENT',
+      );
+    } catch (error) {
+      if (error instanceof PlanGateBlockedError) {
+        this.logger.warn(
+          `product-management request for job ${jobId} blocked: ${error.detalle}`,
+        );
+        await this.sendOrLogTerminal(jobId, () =>
+          this.whatsappClient.sendTextMessage(
+            phoneNumber,
+            PRODUCT_MANAGEMENT_PLAN_REPLY,
+          ),
+        );
+        return;
+      }
+      if (error instanceof TerminalCoreApiError) {
+        this.logger.error(
+          `product-management request failed for job ${jobId}: ${error.message}`,
+        );
+        await this.sendOrLogTerminal(jobId, () =>
+          this.whatsappClient.sendTextMessage(
+            phoneNumber,
+            INVENTORY_FAILURE_REPLY,
+          ),
+        );
+        return;
+      }
+      throw error; // RetryableCoreApiError / unexpected — propagate so BullMQ retries the whole job
+    }
+
     const code = await this.webviewAuthService.mintInventoryCode(phoneNumber);
     const webviewBaseUrl = this.config.getOrThrow<string>('WEBVIEW_BASE_URL');
     await this.sendOrLogTerminal(jobId, () =>
@@ -317,6 +407,7 @@ export class WhatsappInboundProcessor extends WorkerHost {
     jobId: string | number | undefined,
   ): Promise<void> {
     try {
+      await this.planGateService.assertBillingAllowed(phoneNumber);
       const extracted = await this.llmClient.extract(text);
       const { correlationId } = await this.draftBuilderService.buildDraft(
         phoneNumber,
@@ -336,6 +427,18 @@ export class WhatsappInboundProcessor extends WorkerHost {
         ),
       );
     } catch (error) {
+      if (error instanceof PlanGateBlockedError) {
+        this.logger.warn(
+          `billing attempt for job ${jobId} blocked: ${error.reason} — ${error.detalle}`,
+        );
+        await this.sendOrLogTerminal(jobId, () =>
+          this.whatsappClient.sendTextMessage(
+            phoneNumber,
+            error.reason === 'PLAN_LIMIT' ? PLAN_LIMIT_REPLY : NOT_READY_REPLY,
+          ),
+        );
+        return;
+      }
       if (error instanceof UnresolvedCatalogItemsError) {
         this.logger.warn(
           `billing attempt for job ${jobId} has unresolved catalog items: ${error.missingTerms.join(', ')}`,
@@ -391,6 +494,10 @@ export class WhatsappInboundProcessor extends WorkerHost {
     }
 
     try {
+      await this.planGateService.assertFeatureAllowed(
+        phoneNumber,
+        'CREDIT_NOTE',
+      );
       const { correlationId, hasCandidates } =
         await this.creditNoteService.requestByIdentificacion(
           phoneNumber,
@@ -421,6 +528,18 @@ export class WhatsappInboundProcessor extends WorkerHost {
         ),
       );
     } catch (error) {
+      if (error instanceof PlanGateBlockedError) {
+        this.logger.warn(
+          `credit-note request for job ${jobId} blocked: ${error.detalle}`,
+        );
+        await this.sendOrLogTerminal(jobId, () =>
+          this.whatsappClient.sendTextMessage(
+            phoneNumber,
+            CREDIT_NOTE_PLAN_REPLY,
+          ),
+        );
+        return;
+      }
       if (error instanceof TerminalCoreApiError) {
         this.logger.error(
           `credit-note request failed for job ${jobId}: ${error.message}`,
@@ -487,6 +606,11 @@ export class WhatsappInboundProcessor extends WorkerHost {
     }
 
     try {
+      await this.planGateService.assertFeatureAllowed(
+        phoneNumber,
+        'PURCHASE_REGISTRATION',
+      );
+
       const { buffer, mimeType } =
         await this.whatsappClient.downloadMedia(mediaId);
 
@@ -503,6 +627,12 @@ export class WhatsappInboundProcessor extends WorkerHost {
       );
       return { kind: 'text', text: PURCHASE_SUCCESS_REPLY(response) };
     } catch (error) {
+      if (error instanceof PlanGateBlockedError) {
+        this.logger.warn(
+          `purchase registration for job ${jobId} blocked: ${error.detalle}`,
+        );
+        return { kind: 'text', text: PURCHASE_REGISTRATION_PLAN_REPLY };
+      }
       if (
         error instanceof TerminalWhatsappError ||
         error instanceof TerminalCoreApiError

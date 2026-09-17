@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -7,6 +8,9 @@ import type { AuthService } from '../auth/auth.service';
 import type { ConversationStateService } from '../conversation-state/conversation-state.service';
 import type { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
 import type { EmissionWatchdogService } from '../invoice-emission/emission-watchdog.service';
+import type { WebviewAuthService } from '../webview-auth/webview-auth.service';
+import type { PlanGateService } from '../plan-gate/plan-gate.service';
+import { PlanGateBlockedError } from '../plan-gate/plan-gate.errors';
 import type { ConfigService } from '@nestjs/config';
 import { DraftBuilderService } from './draft-builder.service';
 import { UnresolvedCatalogItemsError } from './domain/errors';
@@ -33,6 +37,8 @@ interface MockOverrides {
     getPendingDocument?: jest.Mock;
   };
   emissionWatchdogService?: { scheduleTimeout?: jest.Mock };
+  webviewAuthService?: { killExchangeCodeForCorrelation?: jest.Mock };
+  planGateService?: { assertBillingAllowed?: jest.Mock };
   config?: { getOrThrow?: jest.Mock };
 }
 
@@ -118,6 +124,14 @@ function makeService(overrides: MockOverrides = {}) {
     scheduleTimeout: jest.fn().mockResolvedValue(undefined),
     ...overrides.emissionWatchdogService,
   };
+  const webviewAuthService = {
+    killExchangeCodeForCorrelation: jest.fn().mockResolvedValue(undefined),
+    ...overrides.webviewAuthService,
+  };
+  const planGateService = {
+    assertBillingAllowed: jest.fn().mockResolvedValue(undefined),
+    ...overrides.planGateService,
+  } as unknown as PlanGateService;
   const config = {
     getOrThrow: jest.fn((key: string) => (key === 'SRI_AMBIENTE' ? '1' : '1')),
     ...overrides.config,
@@ -132,6 +146,8 @@ function makeService(overrides: MockOverrides = {}) {
     pendingEmissionStore as unknown as PendingEmissionStore,
     emissionWatchdogService as unknown as EmissionWatchdogService,
     conversationStateService,
+    webviewAuthService as unknown as WebviewAuthService,
+    planGateService,
     config,
   );
 
@@ -145,6 +161,8 @@ function makeService(overrides: MockOverrides = {}) {
     pendingEmissionStore,
     emissionWatchdogService,
     conversationStateService,
+    webviewAuthService,
+    planGateService,
     applyEvent,
     config,
   };
@@ -404,6 +422,37 @@ describe('DraftBuilderService', () => {
       ).rejects.toThrow(UnauthorizedException);
     });
 
+    it('throws ConflictException and never calls Core API when the plan gate re-check blocks the submission', async () => {
+      const { service, catalogClient, invoiceEmissionClient } = makeService({
+        conversationStateService: {
+          getState: jest.fn().mockResolvedValue(draftState()),
+        },
+        planGateService: {
+          assertBillingAllowed: jest
+            .fn()
+            .mockRejectedValue(
+              new PlanGateBlockedError('PLAN_LIMIT', 'Límite alcanzado.'),
+            ),
+        },
+      });
+
+      await expect(
+        service.confirmAndSubmit('+593993908744', 'corr-1', {
+          comprador: {},
+          detalles: [
+            {
+              idCliente: 'item-1',
+              selectedCandidateId: ps5Candidate.id,
+              cantidad: 1,
+            },
+          ],
+        }),
+      ).rejects.toThrow(ConflictException);
+
+      expect(catalogClient.getDetalles).not.toHaveBeenCalled();
+      expect(invoiceEmissionClient.emitir).not.toHaveBeenCalled();
+    });
+
     it('assembles the invoice from /inventario/productos/detalles (with impuestos), emits it to Core API, and stores the pending emission instead of resolving synchronously', async () => {
       const {
         service,
@@ -413,6 +462,7 @@ describe('DraftBuilderService', () => {
         pendingEmissionStore,
         emissionWatchdogService,
         emisorClient,
+        webviewAuthService,
       } = makeService({
         conversationStateService: {
           getState: jest.fn().mockResolvedValue(draftState()),
@@ -467,6 +517,9 @@ describe('DraftBuilderService', () => {
       expect(applyEvent).not.toHaveBeenCalledWith('+593993908744', {
         type: 'WEBHOOK_RECEIVED',
       });
+      expect(
+        webviewAuthService.killExchangeCodeForCorrelation,
+      ).toHaveBeenCalledWith('corr-1');
     });
 
     it('resets the conversation to idle and rethrows when Core API rejects the emission', async () => {

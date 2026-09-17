@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import FormData from 'form-data';
 import { CORE_API_CLIENT } from '../core-api/core-api.module';
 import type { CoreApiClient } from '../core-api/core-api-client.interface';
 import type { CoreApiUserToken } from '../core-api/core-api-token';
@@ -32,9 +33,15 @@ export class PurchasesService implements PurchasesClient {
     token: CoreApiUserToken,
     xml: string,
   ): Promise<PurchaseRegisteredResponse> {
+    const form = new FormData();
+    form.append('file', Buffer.from(xml, 'utf-8'), {
+      filename: 'factura.xml',
+      contentType: 'application/xml',
+    });
+
     const data = await this.coreApiClient.post<
       PurchaseRegisteredResponse | PurchaseFailureResponse
-    >('/compras/xml', token, xml, { 'Content-Type': 'application/xml' });
+    >('/compras/xml', token, form, form.getHeaders());
 
     if (isFailureResponse(data)) {
       throw new TerminalCoreApiError(data.error);

@@ -22,6 +22,8 @@ import {
   TerminalCoreApiError,
 } from '../../core-api/core-api.errors';
 import type { PurchasesClient } from '../../purchases/purchases-client.interface';
+import type { PlanGateService } from '../../plan-gate/plan-gate.service';
+import { PlanGateBlockedError } from '../../plan-gate/plan-gate.errors';
 import {
   InboundMessageJobDto,
   InboundMessageType,
@@ -70,6 +72,8 @@ describe('WhatsappInboundProcessor', () => {
   let buildDraft: jest.Mock;
   let requestByIdentificacion: jest.Mock;
   let registrarXml: jest.Mock;
+  let assertBillingAllowed: jest.Mock;
+  let assertFeatureAllowed: jest.Mock;
   let client: WhatsappClient;
   let sttClient: SttClient;
   let llmClient: LlmClient;
@@ -80,6 +84,7 @@ describe('WhatsappInboundProcessor', () => {
   let draftBuilderService: DraftBuilderService;
   let creditNoteService: CreditNoteService;
   let purchasesClient: PurchasesClient;
+  let planGateService: PlanGateService;
   let config: ConfigService;
   let processor: WhatsappInboundProcessor;
 
@@ -130,6 +135,8 @@ describe('WhatsappInboundProcessor', () => {
       totales: [],
       createdAt: '2026-09-16T20:31:01.826Z',
     });
+    assertBillingAllowed = jest.fn().mockResolvedValue(undefined);
+    assertFeatureAllowed = jest.fn().mockResolvedValue(undefined);
     client = {
       sendTextMessage,
       sendCtaMessage,
@@ -156,6 +163,10 @@ describe('WhatsappInboundProcessor', () => {
       requestByIdentificacion,
     } as unknown as CreditNoteService;
     purchasesClient = { registrarXml };
+    planGateService = {
+      assertBillingAllowed,
+      assertFeatureAllowed,
+    } as unknown as PlanGateService;
     config = {
       getOrThrow: () => 'https://webview.test',
     } as unknown as ConfigService;
@@ -170,6 +181,7 @@ describe('WhatsappInboundProcessor', () => {
       draftBuilderService,
       creditNoteService,
       purchasesClient,
+      planGateService,
       config,
     );
   });
@@ -407,6 +419,33 @@ describe('WhatsappInboundProcessor', () => {
         'https://webview.test/login?code=login-code-1',
       );
     });
+
+    it('sends the plan reply (no CTA) when the plan gate blocks product management for the current plan tier', async () => {
+      getValidToken.mockResolvedValue('valid-token');
+      classify.mockResolvedValue({
+        category: 'manage_inventory',
+        confidence: 1,
+        method: 'rule',
+      });
+      assertFeatureAllowed.mockRejectedValue(
+        new PlanGateBlockedError('FEATURE_NOT_IN_PLAN', 'Plan actual: MEDIO.'),
+      );
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.inventory-plan-blocked',
+        type: InboundMessageType.TEXT,
+        text: 'administrar productos',
+      });
+
+      await processor.process(job);
+
+      expect(mintInventoryCode).not.toHaveBeenCalled();
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('administración de productos'),
+      );
+    });
   });
 
   it('classifies text messages and replies with the matching hardcoded message', async () => {
@@ -565,6 +604,48 @@ describe('WhatsappInboundProcessor', () => {
       expect(sendCtaMessage).not.toHaveBeenCalled();
       expect(sendTextMessage).not.toHaveBeenCalled();
     });
+
+    it('sends the plan-limit reply (no CTA, no LLM call) when the plan gate blocks with PLAN_LIMIT', async () => {
+      assertBillingAllowed.mockRejectedValue(
+        new PlanGateBlockedError('PLAN_LIMIT', 'Límite alcanzado.'),
+      );
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.billing-plan-limit',
+        type: InboundMessageType.TEXT,
+        text: '2 panes a 0.50',
+      });
+
+      await processor.process(job);
+
+      expect(extract).not.toHaveBeenCalled();
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('límite de comprobantes'),
+      );
+    });
+
+    it('sends the not-ready reply when the plan gate blocks with NOT_READY', async () => {
+      assertBillingAllowed.mockRejectedValue(
+        new PlanGateBlockedError('NOT_READY', 'Certificado vencido.'),
+      );
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.billing-not-ready',
+        type: InboundMessageType.TEXT,
+        text: '2 panes a 0.50',
+      });
+
+      await processor.process(job);
+
+      expect(extract).not.toHaveBeenCalled();
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('lista para facturar'),
+      );
+    });
   });
 
   describe('credit-note requests', () => {
@@ -673,6 +754,27 @@ describe('WhatsappInboundProcessor', () => {
       await processor.process(job);
 
       expect(extract).not.toHaveBeenCalled();
+    });
+
+    it('sends the plan reply (no CTA) when the plan gate blocks credit notes for the current plan tier', async () => {
+      assertFeatureAllowed.mockRejectedValue(
+        new PlanGateBlockedError('FEATURE_NOT_IN_PLAN', 'Plan actual: BASICO.'),
+      );
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.credit-note-plan-blocked',
+        type: InboundMessageType.TEXT,
+        text: 'emite una nota de credito al cliente 1850137918',
+      });
+
+      await processor.process(job);
+
+      expect(requestByIdentificacion).not.toHaveBeenCalled();
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('notas de crédito'),
+      );
     });
   });
 
@@ -837,6 +939,20 @@ describe('WhatsappInboundProcessor', () => {
         RetryableCoreApiError,
       );
       expect(sendTextMessage).not.toHaveBeenCalled();
+    });
+
+    it('sends the plan reply when the plan gate blocks purchase registration for the current plan tier', async () => {
+      assertFeatureAllowed.mockRejectedValue(
+        new PlanGateBlockedError('FEATURE_NOT_IN_PLAN', 'Plan actual: MEDIO.'),
+      );
+
+      await processor.process(documentJob());
+
+      expect(registrarXml).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('registro de compras'),
+      );
     });
   });
 

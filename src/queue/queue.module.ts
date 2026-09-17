@@ -14,6 +14,7 @@ import { DraftBuilderModule } from '../draft-builder/draft-builder.module';
 import { InvoiceEmissionModule } from '../invoice-emission/invoice-emission.module';
 import { CreditNoteModule } from '../credit-note/credit-note.module';
 import { PurchasesModule } from '../purchases/purchases.module';
+import { PlanGateModule } from '../plan-gate/plan-gate.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { PurchasesModule } from '../purchases/purchases.module';
     InvoiceEmissionModule,
     CreditNoteModule,
     PurchasesModule,
+    PlanGateModule,
   ],
   providers: [WhatsappInboundProcessor, InvoiceEmissionProcessor],
   exports: [BullModule],

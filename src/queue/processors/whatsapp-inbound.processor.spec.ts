@@ -351,6 +351,83 @@ describe('WhatsappInboundProcessor', () => {
     });
   });
 
+  describe('ayuda', () => {
+    it('sends the help guide when authenticated, without touching auth/classification', async () => {
+      getValidToken.mockResolvedValue('valid-token');
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.ayuda',
+        type: InboundMessageType.TEXT,
+        text: 'ayuda',
+      });
+
+      await processor.process(job);
+
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('Facturar'),
+      );
+      expect(getValidToken).not.toHaveBeenCalled();
+      expect(classify).not.toHaveBeenCalled();
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+    });
+
+    it('sends the same help guide when unauthenticated', async () => {
+      getValidToken.mockResolvedValue(null);
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.ayuda-unauth',
+        type: InboundMessageType.TEXT,
+        text: 'ayuda',
+      });
+
+      await processor.process(job);
+
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        expect.stringContaining('Registrar una compra'),
+      );
+      expect(getValidToken).not.toHaveBeenCalled();
+    });
+
+    it('recognizes "help" and "?" as aliases, case-insensitively and without accents', async () => {
+      for (const [id, text] of [
+        ['wamid.ayuda-help', 'HELP'],
+        ['wamid.ayuda-question', '?'],
+        ['wamid.ayuda-noaccent', 'Ayuda'],
+      ] as const) {
+        sendTextMessage.mockClear();
+        const job = makeJob({
+          phoneNumber: '5219999999999',
+          whatsappMessageId: id,
+          type: InboundMessageType.TEXT,
+          text,
+        });
+
+        await processor.process(job);
+
+        expect(sendTextMessage).toHaveBeenCalledWith(
+          '5219999999999',
+          expect.stringContaining('Facturar'),
+        );
+      }
+    });
+
+    it('sends exactly one message total (message-budget guard)', async () => {
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.ayuda-budget',
+        type: InboundMessageType.TEXT,
+        text: 'ayuda',
+      });
+
+      await processor.process(job);
+
+      expect(sendTextMessage).toHaveBeenCalledTimes(1);
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+    });
+  });
+
   describe('administrar productos', () => {
     it('mints an inventory code and sends a CTA via the manage_inventory intent, when authenticated', async () => {
       getValidToken.mockResolvedValue('valid-token');

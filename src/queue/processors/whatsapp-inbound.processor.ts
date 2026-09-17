@@ -89,6 +89,28 @@ const PURCHASE_REGISTRATION_PLAN_REPLY =
   'El registro de compras no está disponible en tu plan actual. Contáctanos para actualizar tu plan.';
 const INVENTORY_FAILURE_REPLY =
   'No pudimos abrir tu inventario, por favor intenta de nuevo.';
+const HELP_REPLY = `🧾 *¿Qué puedo hacer por ti?*
+
+*1. Facturar* 🧾
+Escríbeme o mándame una nota de voz con los datos de tu venta.
+Ejemplo: "Vendí 2 panes a 0.50 y una cola a 1.00 al cliente 1850137918"
+
+*2. Nota de crédito* ↩️
+Dime la cédula o RUC del cliente y te muestro sus facturas.
+Ejemplo: "Nota de crédito para el cliente 1850137918"
+
+*3. Administrar productos* 📦
+Escribe "administrar productos" para editar tu catálogo e inventario.
+
+*4. Registrar una compra* 📄
+Envía el archivo XML de tu factura de compra como documento adjunto.
+
+*Otros comandos*
+• "iniciar sesión" → vincula tu cuenta de WhatsApp
+• "cerrar sesión" → cierra tu sesión
+• "ayuda" → muestra este mensaje otra vez
+
+Si una función no está disponible, revisa tu plan o contáctanos para más información.`;
 
 // Accent-insensitive: typing "sesion" without the tilde on a phone keyboard
 // is common. "login" is accepted as a plain-English fallback.
@@ -110,6 +132,16 @@ function isLogoutCommand(text: string | undefined): boolean {
     .trim()
     .toLowerCase();
   return normalized === 'cerrar sesion' || normalized === 'logout';
+}
+
+function isHelpCommand(text: string | undefined): boolean {
+  if (!text) return false;
+  const normalized = text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase();
+  return normalized === 'ayuda' || normalized === 'help' || normalized === '?';
 }
 
 // buildReply()/buildClassifiedReply()/buildAudioReply() return one of these:
@@ -153,6 +185,16 @@ export class WhatsappInboundProcessor extends WorkerHost {
     // authenticated, never NOT_AUTHENTICATED_REPLY/login-CTA. No LLM cost.
     if (type === InboundMessageType.TEXT && isLogoutCommand(text)) {
       await this.handleLogoutCommand(phoneNumber, job.id);
+      return;
+    }
+
+    // "ayuda" also runs before the auth gate — a user should be able to see
+    // what the bot can do whether or not they're logged in yet. Always the
+    // same hardcoded guide text, no LLM cost.
+    if (type === InboundMessageType.TEXT && isHelpCommand(text)) {
+      await this.sendOrLogTerminal(job.id, () =>
+        this.whatsappClient.sendTextMessage(phoneNumber, HELP_REPLY),
+      );
       return;
     }
 

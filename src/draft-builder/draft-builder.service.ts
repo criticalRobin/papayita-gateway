@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -24,6 +25,8 @@ import { PendingEmissionStore } from '../invoice-emission/pending-emission.store
 import { EmissionWatchdogService } from '../invoice-emission/emission-watchdog.service';
 import { ConversationStateService } from '../conversation-state/conversation-state.service';
 import { WebviewAuthService } from '../webview-auth/webview-auth.service';
+import { PlanGateService } from '../plan-gate/plan-gate.service';
+import { PlanGateBlockedError } from '../plan-gate/plan-gate.errors';
 import type { ExtractedBillingAttempt } from '../extraction/domain/types';
 import { buildSkeleton } from './domain/build-skeleton';
 import {
@@ -59,6 +62,7 @@ export class DraftBuilderService {
     private readonly emissionWatchdogService: EmissionWatchdogService,
     private readonly conversationStateService: ConversationStateService,
     private readonly webviewAuthService: WebviewAuthService,
+    private readonly planGateService: PlanGateService,
     private readonly config: ConfigService,
   ) {}
 
@@ -163,6 +167,20 @@ export class DraftBuilderService {
       throw new UnauthorizedException(
         'Tu sesión con el negocio expiró, pídele que envíe la factura de nuevo.',
       );
+    }
+
+    // Re-checked here (not just at draft-build time) — the webview session
+    // can stay open for minutes, during which the monthly comprobante count
+    // could tip over. See project-info.md's webview re-validation discipline.
+    try {
+      await this.planGateService.assertBillingAllowed(phoneNumber);
+    } catch (error) {
+      if (error instanceof PlanGateBlockedError) {
+        throw new ConflictException(
+          'No pudimos completar tu factura por una restricción de tu plan. Contáctanos para más información.',
+        );
+      }
+      throw error;
     }
 
     dto.detalles.forEach((detalle) => {

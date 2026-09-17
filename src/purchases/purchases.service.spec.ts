@@ -1,3 +1,4 @@
+import FormData from 'form-data';
 import type { CoreApiClient } from '../core-api/core-api-client.interface';
 import type { CoreApiUserToken } from '../core-api/core-api-token';
 import { TerminalCoreApiError } from '../core-api/core-api.errors';
@@ -38,15 +39,18 @@ describe('PurchasesService', () => {
     createdAt: '2026-09-16T20:31:01.826Z',
   };
 
-  it('posts the raw XML with an application/xml content type and returns the record', async () => {
+  it('posts the XML as multipart form data under the "file" field and returns the record', async () => {
     const post = jest.fn().mockResolvedValue(successResponse);
     const service = new PurchasesService(makeCoreApiClient(post));
 
     const result = await service.registrarXml(token, xml);
 
-    expect(post).toHaveBeenCalledWith('/compras/xml', token, xml, {
-      'Content-Type': 'application/xml',
-    });
+    expect(post).toHaveBeenCalledTimes(1);
+    const [path, calledToken, form, headers] = post.mock.calls[0];
+    expect(path).toBe('/compras/xml');
+    expect(calledToken).toBe(token);
+    expect(form).toBeInstanceOf(FormData);
+    expect(headers['content-type']).toMatch(/^multipart\/form-data/);
     expect(result).toEqual(successResponse);
   });
 

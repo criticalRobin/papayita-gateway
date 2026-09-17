@@ -19,7 +19,9 @@ function makeRedis(): Redis {
 }
 
 function makeConfig(): ConfigService {
-  return { get: () => 900 } as unknown as ConfigService;
+  return {
+    get: jest.fn((_key: string, def?: number) => def),
+  } as unknown as ConfigService;
 }
 
 function makeWebviewSessionService(
@@ -97,7 +99,7 @@ describe('WebviewAuthService', () => {
       });
     });
 
-    it('is single-use — a second consume of the same exchange code returns null', async () => {
+    it('is reusable up to the configured attempt limit, then dies', async () => {
       const redis = makeRedis();
       const service = new WebviewAuthService(
         redis,
@@ -106,10 +108,15 @@ describe('WebviewAuthService', () => {
       );
 
       const code = await service.mintExchangeCode('+593993908744', 'corr-1');
-      await service.consumeExchangeCode(code);
-      const secondAttempt = await service.consumeExchangeCode(code);
+      const first = await service.consumeExchangeCode(code);
+      const second = await service.consumeExchangeCode(code);
+      const third = await service.consumeExchangeCode(code);
+      const fourth = await service.consumeExchangeCode(code);
 
-      expect(secondAttempt).toBeNull();
+      expect(first).not.toBeNull();
+      expect(second).not.toBeNull();
+      expect(third).not.toBeNull();
+      expect(fourth).toBeNull();
     });
 
     it('returns null for an unknown exchange code', async () => {
@@ -123,6 +130,34 @@ describe('WebviewAuthService', () => {
       const result = await service.consumeExchangeCode('does-not-exist');
 
       expect(result).toBeNull();
+    });
+
+    it('killExchangeCodeForCorrelation burns the code immediately, even with attempts left', async () => {
+      const redis = makeRedis();
+      const service = new WebviewAuthService(
+        redis,
+        makeConfig(),
+        makeWebviewSessionService(),
+      );
+
+      const code = await service.mintExchangeCode('+593993908744', 'corr-1');
+      await service.killExchangeCodeForCorrelation('corr-1');
+      const result = await service.consumeExchangeCode(code);
+
+      expect(result).toBeNull();
+    });
+
+    it('killExchangeCodeForCorrelation is a no-op for an unknown correlationId', async () => {
+      const redis = makeRedis();
+      const service = new WebviewAuthService(
+        redis,
+        makeConfig(),
+        makeWebviewSessionService(),
+      );
+
+      await expect(
+        service.killExchangeCodeForCorrelation('does-not-exist'),
+      ).resolves.toBeUndefined();
     });
   });
 

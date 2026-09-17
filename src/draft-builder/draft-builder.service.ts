@@ -23,6 +23,7 @@ import type { InvoiceEmissionClient } from '../invoice-emission/invoice-emission
 import { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
 import { EmissionWatchdogService } from '../invoice-emission/emission-watchdog.service';
 import { ConversationStateService } from '../conversation-state/conversation-state.service';
+import { WebviewAuthService } from '../webview-auth/webview-auth.service';
 import type { ExtractedBillingAttempt } from '../extraction/domain/types';
 import { buildSkeleton } from './domain/build-skeleton';
 import {
@@ -57,6 +58,7 @@ export class DraftBuilderService {
     private readonly pendingEmissionStore: PendingEmissionStore,
     private readonly emissionWatchdogService: EmissionWatchdogService,
     private readonly conversationStateService: ConversationStateService,
+    private readonly webviewAuthService: WebviewAuthService,
     private readonly config: ConfigService,
   ) {}
 
@@ -227,6 +229,9 @@ export class DraftBuilderService {
     await this.conversationStateService.applyEvent(phoneNumber, {
       type: 'WEBVIEW_CONFIRMED',
     });
+    // Draft actually confirmed — burn the exchange code so a stale/reopened
+    // tab can't replay this CTA link anymore.
+    await this.webviewAuthService.killExchangeCodeForCorrelation(correlationId);
 
     try {
       await this.invoiceEmissionClient.emitir(token, invoice);

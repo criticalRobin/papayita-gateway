@@ -7,6 +7,7 @@ import type { AuthService } from '../auth/auth.service';
 import type { ConversationStateService } from '../conversation-state/conversation-state.service';
 import type { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
 import type { EmissionWatchdogService } from '../invoice-emission/emission-watchdog.service';
+import type { WebviewAuthService } from '../webview-auth/webview-auth.service';
 import type { ConfigService } from '@nestjs/config';
 import { DraftBuilderService } from './draft-builder.service';
 import { UnresolvedCatalogItemsError } from './domain/errors';
@@ -33,6 +34,7 @@ interface MockOverrides {
     getPendingDocument?: jest.Mock;
   };
   emissionWatchdogService?: { scheduleTimeout?: jest.Mock };
+  webviewAuthService?: { killExchangeCodeForCorrelation?: jest.Mock };
   config?: { getOrThrow?: jest.Mock };
 }
 
@@ -118,6 +120,10 @@ function makeService(overrides: MockOverrides = {}) {
     scheduleTimeout: jest.fn().mockResolvedValue(undefined),
     ...overrides.emissionWatchdogService,
   };
+  const webviewAuthService = {
+    killExchangeCodeForCorrelation: jest.fn().mockResolvedValue(undefined),
+    ...overrides.webviewAuthService,
+  };
   const config = {
     getOrThrow: jest.fn((key: string) => (key === 'SRI_AMBIENTE' ? '1' : '1')),
     ...overrides.config,
@@ -132,6 +138,7 @@ function makeService(overrides: MockOverrides = {}) {
     pendingEmissionStore as unknown as PendingEmissionStore,
     emissionWatchdogService as unknown as EmissionWatchdogService,
     conversationStateService,
+    webviewAuthService as unknown as WebviewAuthService,
     config,
   );
 
@@ -145,6 +152,7 @@ function makeService(overrides: MockOverrides = {}) {
     pendingEmissionStore,
     emissionWatchdogService,
     conversationStateService,
+    webviewAuthService,
     applyEvent,
     config,
   };
@@ -413,6 +421,7 @@ describe('DraftBuilderService', () => {
         pendingEmissionStore,
         emissionWatchdogService,
         emisorClient,
+        webviewAuthService,
       } = makeService({
         conversationStateService: {
           getState: jest.fn().mockResolvedValue(draftState()),
@@ -467,6 +476,9 @@ describe('DraftBuilderService', () => {
       expect(applyEvent).not.toHaveBeenCalledWith('+593993908744', {
         type: 'WEBHOOK_RECEIVED',
       });
+      expect(
+        webviewAuthService.killExchangeCodeForCorrelation,
+      ).toHaveBeenCalledWith('corr-1');
     });
 
     it('resets the conversation to idle and rethrows when Core API rejects the emission', async () => {

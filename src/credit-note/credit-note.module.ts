@@ -5,6 +5,7 @@ import { EmisorModule } from '../emisor/emisor.module';
 import { PersonaModule } from '../persona/persona.module';
 import { ConversationStateModule } from '../conversation-state/conversation-state.module';
 import { WebviewSessionModule } from '../webview-session/webview-session.module';
+import { WebviewAuthModule } from '../webview-auth/webview-auth.module';
 import { InvoiceEmissionModule } from '../invoice-emission/invoice-emission.module';
 import { CreditNoteApiService } from './credit-note-api.service';
 import { CreditNoteService } from './credit-note.service';
@@ -19,6 +20,7 @@ import { CREDIT_NOTE_CLIENT } from './credit-note-client.interface';
     PersonaModule,
     ConversationStateModule,
     WebviewSessionModule,
+    WebviewAuthModule,
     InvoiceEmissionModule,
   ],
   controllers: [CreditNoteController],

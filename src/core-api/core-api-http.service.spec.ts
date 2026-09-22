@@ -43,11 +43,16 @@ describe('CoreApiHttpService', () => {
       const httpService = { post } as unknown as HttpService;
       const service = new CoreApiHttpService(httpService, config);
 
-      const result = await service.login('user@empresa.com', 'secret');
+      const result = await service.login(
+        'user@empresa.com',
+        'secret',
+        '593993908744',
+      );
 
       expect(post).toHaveBeenCalledWith('https://core-api.test/auth/login', {
         email: 'user@empresa.com',
         password: 'secret',
+        whatsapp: '+593993908744',
       });
       expect(result).toEqual({
         accessToken: 'access-1',
@@ -64,9 +69,37 @@ describe('CoreApiHttpService', () => {
       const httpService = { post } as unknown as HttpService;
       const service = new CoreApiHttpService(httpService, config);
 
-      await expect(service.login('user@empresa.com', 'wrong')).rejects.toThrow(
-        TerminalCoreApiError,
+      await expect(
+        service.login('user@empresa.com', 'wrong', '593993908744'),
+      ).rejects.toThrow(TerminalCoreApiError);
+    });
+
+    it('surfaces the Core API error message on the thrown TerminalCoreApiError', async () => {
+      const post = jest.fn().mockReturnValueOnce(
+        throwError(
+          () =>
+            new AxiosError('Request failed', undefined, undefined, undefined, {
+              status: 401,
+              statusText: 'error',
+              data: {
+                success: false,
+                error:
+                  'El número de WhatsApp +593987654321 no está autorizado para este emisor',
+              },
+              headers: new AxiosHeaders(),
+              config: { headers: new AxiosHeaders() },
+            }),
+        ),
       );
+      const httpService = { post } as unknown as HttpService;
+      const service = new CoreApiHttpService(httpService, config);
+
+      await expect(
+        service.login('user@empresa.com', 'secret', '593987654321'),
+      ).rejects.toMatchObject({
+        coreApiMessage:
+          'El número de WhatsApp +593987654321 no está autorizado para este emisor',
+      });
     });
 
     it('maps a 5xx to RetryableCoreApiError', async () => {
@@ -76,9 +109,9 @@ describe('CoreApiHttpService', () => {
       const httpService = { post } as unknown as HttpService;
       const service = new CoreApiHttpService(httpService, config);
 
-      await expect(service.login('user@empresa.com', 'secret')).rejects.toThrow(
-        RetryableCoreApiError,
-      );
+      await expect(
+        service.login('user@empresa.com', 'secret', '593993908744'),
+      ).rejects.toThrow(RetryableCoreApiError);
     });
 
     it('maps a network error (no response) to RetryableCoreApiError', async () => {
@@ -90,9 +123,9 @@ describe('CoreApiHttpService', () => {
       const httpService = { post } as unknown as HttpService;
       const service = new CoreApiHttpService(httpService, config);
 
-      await expect(service.login('user@empresa.com', 'secret')).rejects.toThrow(
-        RetryableCoreApiError,
-      );
+      await expect(
+        service.login('user@empresa.com', 'secret', '593993908744'),
+      ).rejects.toThrow(RetryableCoreApiError);
     });
   });
 

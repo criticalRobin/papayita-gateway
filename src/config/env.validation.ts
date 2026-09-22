@@ -40,6 +40,10 @@ export const envSchema = z.object({
   WEBVIEW_BASE_URL: z.string().url(),
   LOGIN_CODE_TTL_SECONDS: z.coerce.number().int().positive().default(900),
 
+  // How many wrong-credential attempts a single login code tolerates before
+  // it's burned outright — see WebviewAuthService's login-code methods.
+  LOGIN_CODE_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
+
   // How many times a single draft-confirmation exchange code can be
   // consumed before it's burned — covers reopening the CTA link after
   // accidentally closing the webview mid-review. Still bounded by

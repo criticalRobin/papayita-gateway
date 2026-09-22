@@ -32,7 +32,7 @@ function makeWebviewSessionService(
 
 describe('WebviewAuthService', () => {
   describe('login codes', () => {
-    it('mints a code that resolves back to the phone number once', async () => {
+    it('mints a code that resolves to the phone number and default attempt count', async () => {
       const redis = makeRedis();
       const service = new WebviewAuthService(
         redis,
@@ -41,12 +41,15 @@ describe('WebviewAuthService', () => {
       );
 
       const code = await service.mintLoginCode('5219999999999');
-      const phoneNumber = await service.consumeLoginCode(code);
+      const state = await service.peekLoginCode(code);
 
-      expect(phoneNumber).toBe('5219999999999');
+      expect(state).toEqual({
+        phoneNumber: '5219999999999',
+        attemptsRemaining: 3,
+      });
     });
 
-    it('is single-use — a second consume of the same code returns null', async () => {
+    it('peeking does not mutate attemptsRemaining or burn the code', async () => {
       const redis = makeRedis();
       const service = new WebviewAuthService(
         redis,
@@ -55,13 +58,16 @@ describe('WebviewAuthService', () => {
       );
 
       const code = await service.mintLoginCode('5219999999999');
-      await service.consumeLoginCode(code);
-      const secondAttempt = await service.consumeLoginCode(code);
+      await service.peekLoginCode(code);
+      const second = await service.peekLoginCode(code);
 
-      expect(secondAttempt).toBeNull();
+      expect(second).toEqual({
+        phoneNumber: '5219999999999',
+        attemptsRemaining: 3,
+      });
     });
 
-    it('returns null for an unknown code', async () => {
+    it('returns null from peekLoginCode for an unknown code', async () => {
       const redis = makeRedis();
       const service = new WebviewAuthService(
         redis,
@@ -69,7 +75,69 @@ describe('WebviewAuthService', () => {
         makeWebviewSessionService(),
       );
 
-      const result = await service.consumeLoginCode('does-not-exist');
+      const result = await service.peekLoginCode('does-not-exist');
+
+      expect(result).toBeNull();
+    });
+
+    it('burnLoginCode deletes the code outright', async () => {
+      const redis = makeRedis();
+      const service = new WebviewAuthService(
+        redis,
+        makeConfig(),
+        makeWebviewSessionService(),
+      );
+
+      const code = await service.mintLoginCode('5219999999999');
+      await service.burnLoginCode(code);
+
+      expect(await service.peekLoginCode(code)).toBeNull();
+    });
+
+    it('registerLoginFailure decrements attemptsRemaining and keeps the code alive', async () => {
+      const redis = makeRedis();
+      const service = new WebviewAuthService(
+        redis,
+        makeConfig(),
+        makeWebviewSessionService(),
+      );
+
+      const code = await service.mintLoginCode('5219999999999');
+      const attemptsRemaining = await service.registerLoginFailure(code);
+
+      expect(attemptsRemaining).toBe(2);
+      expect(await service.peekLoginCode(code)).toEqual({
+        phoneNumber: '5219999999999',
+        attemptsRemaining: 2,
+      });
+    });
+
+    it('registerLoginFailure burns the code on the 3rd failure', async () => {
+      const redis = makeRedis();
+      const service = new WebviewAuthService(
+        redis,
+        makeConfig(),
+        makeWebviewSessionService(),
+      );
+
+      const code = await service.mintLoginCode('5219999999999');
+      await service.registerLoginFailure(code);
+      await service.registerLoginFailure(code);
+      const third = await service.registerLoginFailure(code);
+
+      expect(third).toBe(0);
+      expect(await service.peekLoginCode(code)).toBeNull();
+    });
+
+    it('registerLoginFailure returns null for an unknown/expired code', async () => {
+      const redis = makeRedis();
+      const service = new WebviewAuthService(
+        redis,
+        makeConfig(),
+        makeWebviewSessionService(),
+      );
+
+      const result = await service.registerLoginFailure('does-not-exist');
 
       expect(result).toBeNull();
     });

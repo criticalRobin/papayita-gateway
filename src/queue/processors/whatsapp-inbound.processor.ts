@@ -93,7 +93,7 @@ const HELP_REPLY = `🧾 *¿Qué puedo hacer por ti?*
 
 *1. Facturar* 🧾
 Escríbeme o mándame una nota de voz con los datos de tu venta.
-Ejemplo: "Vendí 2 panes a 0.50 y una cola a 1.00 al cliente 1850137918"
+Ejemplo: "Factura 2 pantalones y una chompa al cliente 1850137918"
 
 *2. Nota de crédito* ↩️
 Dime la cédula o RUC del cliente y te muestro sus facturas.

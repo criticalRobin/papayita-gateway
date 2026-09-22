@@ -14,6 +14,16 @@ interface ExchangeCodePayload {
   attemptsRemaining: number;
 }
 
+interface LoginCodePayload {
+  phoneNumber: string;
+  attemptsRemaining: number;
+}
+
+export interface LoginCodeState {
+  phoneNumber: string;
+  attemptsRemaining: number;
+}
+
 export interface ConsumedExchangeCode {
   phoneNumber: string;
   correlationId: string;
@@ -33,22 +43,62 @@ export class WebviewAuthService {
   async mintLoginCode(phoneNumber: string): Promise<string> {
     const code = randomUUID();
     const ttl = this.config.get<number>('LOGIN_CODE_TTL_SECONDS', 900);
-    await this.redis.set(this.loginKey(code), phoneNumber, 'EX', ttl);
+    const maxAttempts = this.config.get<number>('LOGIN_CODE_MAX_ATTEMPTS', 3);
+    const payload: LoginCodePayload = {
+      phoneNumber,
+      attemptsRemaining: maxAttempts,
+    };
+    await this.redis.set(
+      this.loginKey(code),
+      JSON.stringify(payload),
+      'EX',
+      ttl,
+    );
     return code;
   }
 
-  // Single-use: the code is deleted as soon as it's read, so a replayed or
-  // expired code always returns null.
-  async consumeLoginCode(code: string): Promise<string | null> {
-    const phoneNumber = await this.redis.get(this.loginKey(code));
-    if (!phoneNumber) return null;
-    await this.redis.del(this.loginKey(code));
-    this.logger.log(`login code consumed for phone=${maskTail(phoneNumber)}`);
-    return phoneNumber;
+  // Read-only — does not burn the code or touch attemptsRemaining. Used both
+  // to resolve the phone number before attempting login and to serve
+  // GET /login-webview/phone (so a page reload mid-flow still shows the
+  // right attempt count without the front needing its own storage).
+  async peekLoginCode(code: string): Promise<LoginCodeState | null> {
+    const raw = await this.redis.get(this.loginKey(code));
+    if (!raw) return null;
+    return JSON.parse(raw) as LoginCodePayload;
   }
 
-  async peekPhoneForCode(code: string): Promise<string | null> {
-    return this.redis.get(this.loginKey(code));
+  // Burns the code outright — called once login actually succeeds, so the
+  // code can't be replayed.
+  async burnLoginCode(code: string): Promise<void> {
+    await this.redis.del(this.loginKey(code));
+  }
+
+  // Records a wrong-credentials attempt: decrements attemptsRemaining and
+  // burns the code once it hits 0 (a network blip on the Core API side
+  // should NOT call this — only bad credentials/wpp-not-authorized count).
+  // Returns the remaining count, or null if the code was already gone
+  // (expired/replayed) so the caller can fall back to "request a new link".
+  async registerLoginFailure(code: string): Promise<number | null> {
+    const raw = await this.redis.get(this.loginKey(code));
+    if (!raw) return null;
+
+    const payload = JSON.parse(raw) as LoginCodePayload;
+    payload.attemptsRemaining -= 1;
+    if (payload.attemptsRemaining <= 0) {
+      await this.redis.del(this.loginKey(code));
+    } else {
+      // KEEPTTL: don't reset the countdown on every retry — still bounded by
+      // the original code TTL.
+      await this.redis.set(
+        this.loginKey(code),
+        JSON.stringify(payload),
+        'KEEPTTL',
+      );
+    }
+    this.logger.log(
+      `login attempt failed for phone=${maskTail(payload.phoneNumber)}, attemptsRemaining=${payload.attemptsRemaining}`,
+    );
+    return payload.attemptsRemaining;
   }
 
   // "administrar productos" CTA: scoped to one phone, single-use, same shape

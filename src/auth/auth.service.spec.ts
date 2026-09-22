@@ -161,7 +161,11 @@ describe('AuthService', () => {
 
     await service.login(phoneNumber, 'user@empresa.com', 'secret');
 
-    expect(login).toHaveBeenCalledWith('user@empresa.com', 'secret');
+    expect(login).toHaveBeenCalledWith(
+      'user@empresa.com',
+      'secret',
+      phoneNumber,
+    );
     expect(
       (JSON.parse(store.get(`auth:${phoneNumber}`)!) as CachedTokenShape)
         .accessToken,

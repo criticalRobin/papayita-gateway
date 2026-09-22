@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { toE164 } from '../common/phone';
 import { CORE_API_CLIENT } from '../core-api/core-api.module';
 import type { CoreApiClient } from '../core-api/core-api-client.interface';
 import type { CoreApiUserToken } from '../core-api/core-api-token';
@@ -33,7 +34,7 @@ export class CatalogService implements CatalogSearchClient {
   ): Promise<CatalogSearchResultGroup[]> {
     const cleanBody: PostBatchCatalogProductDto = {
       ...body,
-      whatsapp: this.toE164(body.whatsapp),
+      whatsapp: toE164(body.whatsapp),
     };
 
     if (cleanBody.terminos.length === 0) return [];
@@ -56,7 +57,7 @@ export class CatalogService implements CatalogSearchClient {
   ): Promise<ProductoDetalle[]> {
     const cleanBody: PostProductDetailDto = {
       ...body,
-      whatsapp: this.toE164(body.whatsapp),
+      whatsapp: toE164(body.whatsapp),
     };
 
     if (cleanBody.items.length === 0) return [];
@@ -67,13 +68,5 @@ export class CatalogService implements CatalogSearchClient {
       cleanBody,
     );
     return response.data.detalles;
-  }
-
-  // Meta's Cloud API gives us the phone number as bare digits (e.g.
-  // "593993908744", no "+") — that's what phoneNumber is everywhere else in
-  // this app (Redis keys, logging). Core API's own validator requires the
-  // leading "+", so it's added only at this boundary, not propagated back.
-  private toE164(phoneNumber: string): string {
-    return phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`;
   }
 }

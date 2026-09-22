@@ -32,21 +32,30 @@ export class AuthController {
   @Post('login-webview')
   @HttpCode(HttpStatus.OK)
   async loginWebview(@Body() dto: LoginWebviewDto): Promise<{ success: true }> {
-    const phoneNumber = await this.webviewAuthService.consumeLoginCode(
-      dto.code,
-    );
-    if (!phoneNumber) {
+    const state = await this.webviewAuthService.peekLoginCode(dto.code);
+    if (!state) {
       throw new UnauthorizedException(
         'Este enlace ya no es válido, solicita uno nuevo desde WhatsApp.',
       );
     }
 
     try {
-      await this.authService.login(phoneNumber, dto.email, dto.password);
+      await this.authService.login(state.phoneNumber, dto.email, dto.password);
+      await this.webviewAuthService.burnLoginCode(dto.code);
       return { success: true };
     } catch (error) {
       if (error instanceof TerminalCoreApiError) {
-        throw new BadRequestException('Credenciales inválidas.');
+        const attemptsRemaining =
+          await this.webviewAuthService.registerLoginFailure(dto.code);
+        if (attemptsRemaining === null) {
+          throw new UnauthorizedException(
+            'Este enlace ya no es válido, solicita uno nuevo desde WhatsApp.',
+          );
+        }
+        const message = error.coreApiMessage?.includes('no está autorizado')
+          ? 'Tu número de WhatsApp no está autorizado para este emisor.'
+          : 'Credenciales inválidas.';
+        throw new BadRequestException({ message, attemptsRemaining });
       }
       if (error instanceof RetryableCoreApiError) {
         throw new ServiceUnavailableException(
@@ -59,8 +68,8 @@ export class AuthController {
 
   @Get('login-webview/phone')
   async getPhoneForLoginCode(@Query('code') code: string) {
-    const phoneNumber = await this.webviewAuthService.peekPhoneForCode(code);
-    if (!phoneNumber) throw new NotFoundException();
-    return { phoneNumber };
+    const state = await this.webviewAuthService.peekLoginCode(code);
+    if (!state) throw new NotFoundException();
+    return state;
   }
 }

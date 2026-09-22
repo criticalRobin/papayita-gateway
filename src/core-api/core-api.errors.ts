@@ -13,6 +13,8 @@ export class TerminalCoreApiError extends Error {
   constructor(
     message: string,
     readonly status?: number,
+    /** Core API's own `{ success: false, error }` message, when the body matched that shape. */
+    readonly coreApiMessage?: string,
   ) {
     super(message);
   }

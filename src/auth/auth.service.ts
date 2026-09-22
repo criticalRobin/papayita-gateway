@@ -62,7 +62,7 @@ export class AuthService {
     email: string,
     password: string,
   ): Promise<void> {
-    const token = await this.coreApiClient.login(email, password);
+    const token = await this.coreApiClient.login(email, password, phoneNumber);
     await this.cache(phoneNumber, token);
     this.logger.log(`phone=${maskTail(phoneNumber)} authenticated`);
   }

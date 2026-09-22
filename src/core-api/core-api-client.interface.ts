@@ -8,7 +8,11 @@ export interface CoreApiTokenSet {
 }
 
 export interface CoreApiClient {
-  login(email: string, password: string): Promise<CoreApiTokenSet>;
+  login(
+    email: string,
+    password: string,
+    whatsapp: string,
+  ): Promise<CoreApiTokenSet>;
   refresh(refreshToken: string): Promise<CoreApiTokenSet>;
   post<T>(
     path: string,

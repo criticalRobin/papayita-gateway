@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { AxiosError } from 'axios';
 import { firstValueFrom } from 'rxjs';
 import { maskTail } from '../common/redact';
+import { toE164 } from '../common/phone';
 import { CoreApiClient, CoreApiTokenSet } from './core-api-client.interface';
 import type { CoreApiUserToken } from './core-api-token';
 import { RetryableCoreApiError, TerminalCoreApiError } from './core-api.errors';
@@ -27,12 +28,17 @@ export class CoreApiHttpService implements CoreApiClient {
     this.baseUrl = this.config.getOrThrow<string>('CORE_API_BASE_URL');
   }
 
-  async login(email: string, password: string): Promise<CoreApiTokenSet> {
+  async login(
+    email: string,
+    password: string,
+    whatsapp: string,
+  ): Promise<CoreApiTokenSet> {
     try {
       const { data } = await firstValueFrom(
         this.httpService.post<LoginResponse>(`${this.baseUrl}/auth/login`, {
           email,
           password,
+          whatsapp: toE164(whatsapp),
         }),
       );
       return this.toTokenSet(data);
@@ -158,6 +164,22 @@ export class CoreApiHttpService implements CoreApiClient {
     return new TerminalCoreApiError(
       `Core API call rejected (status ${status}) for ${context}`,
       status,
+      this.extractErrorMessage(error.response?.data),
     );
+  }
+
+  // Core API's error bodies look like { success: false, error: "..." } —
+  // pull the message out when present so callers can react to specific
+  // cases (e.g. "wpp not authorized") without depending on status codes alone.
+  private extractErrorMessage(data: unknown): string | undefined {
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      'error' in data &&
+      typeof data.error === 'string'
+    ) {
+      return (data as { error: string }).error;
+    }
+    return undefined;
   }
 }

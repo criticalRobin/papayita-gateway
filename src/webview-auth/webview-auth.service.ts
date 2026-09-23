@@ -101,28 +101,48 @@ export class WebviewAuthService {
     return payload.attemptsRemaining;
   }
 
-  // "administrar productos" CTA: scoped to one phone, single-use, same shape
-  // as the login code. Deliberately does not look up emisorId or mint a
-  // session here — that needs AuthService, and this module is already
-  // imported by AuthModule, so injecting AuthService here would close a
-  // circular dependency. That lookup happens in
-  // inventory-webview-auth/inventory-auth-exchange.controller.ts instead,
-  // same reasoning as auth-exchange.controller.ts.
+  // "administrar productos" CTA: scoped to one phone, reusable, and alive for
+  // as long as the phone's WhatsApp auth session — no Redis TTL, same as the
+  // auth record itself. Closing the webview and reopening the CTA must not
+  // dead-end the link. Only the latest code per phone is valid: minting a new
+  // one burns the previous one, and AuthService kills it on
+  // login/logout/refresh failure via killInventoryCodeForPhone.
+  //
+  // Deliberately does not look up emisorId or mint a session here — that
+  // needs AuthService, and this module is already imported by AuthModule, so
+  // injecting AuthService here would close a circular dependency. That lookup
+  // happens in inventory-webview-auth/inventory-auth-exchange.controller.ts
+  // instead, same reasoning as auth-exchange.controller.ts.
   async mintInventoryCode(phoneNumber: string): Promise<string> {
+    await this.killInventoryCodeForPhone(phoneNumber);
     const code = randomUUID();
-    const ttl = this.config.get<number>('LOGIN_CODE_TTL_SECONDS', 900);
-    await this.redis.set(this.inventoryKey(code), phoneNumber, 'EX', ttl);
+    await this.redis.set(this.inventoryKey(code), phoneNumber);
+    await this.redis.set(this.inventoryIdxKey(phoneNumber), code);
     return code;
   }
 
-  async consumeInventoryCode(code: string): Promise<string | null> {
+  // Read-only — every reopen of the CTA resolves the same code. Also checks
+  // the per-phone index so a stale code that survived a missed delete can't
+  // be used once a newer one was minted.
+  async resolveInventoryCode(code: string): Promise<string | null> {
     const phoneNumber = await this.redis.get(this.inventoryKey(code));
     if (!phoneNumber) return null;
-    await this.redis.del(this.inventoryKey(code));
+    const current = await this.redis.get(this.inventoryIdxKey(phoneNumber));
+    if (current !== code) return null;
     this.logger.log(
-      `inventory code consumed for phone=${maskTail(phoneNumber)}`,
+      `inventory code resolved for phone=${maskTail(phoneNumber)}`,
     );
     return phoneNumber;
+  }
+
+  // Idempotent — safe to call whether or not the phone has a live code.
+  async killInventoryCodeForPhone(phoneNumber: string): Promise<void> {
+    const code = await this.redis.get(this.inventoryIdxKey(phoneNumber));
+    if (!code) return;
+    await Promise.all([
+      this.redis.del(this.inventoryKey(code)),
+      this.redis.del(this.inventoryIdxKey(phoneNumber)),
+    ]);
   }
 
   // Draft-confirmation CTA: scoped to one phone + correlationId, same TTL as
@@ -214,6 +234,10 @@ export class WebviewAuthService {
 
   private inventoryKey(code: string): string {
     return `webview-inventory:${code}`;
+  }
+
+  private inventoryIdxKey(phoneNumber: string): string {
+    return `webview-inventory-idx:${phoneNumber}`;
   }
 
   private exchangeKey(code: string): string {

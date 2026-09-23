@@ -27,7 +27,7 @@ export class InventoryAuthExchangeController {
   @Post('exchange')
   @HttpCode(HttpStatus.OK)
   async exchange(@Body() dto: ExchangeInventoryCodeDto) {
-    const phoneNumber = await this.webviewAuthService.consumeInventoryCode(
+    const phoneNumber = await this.webviewAuthService.resolveInventoryCode(
       dto.code,
     );
     if (!phoneNumber) {

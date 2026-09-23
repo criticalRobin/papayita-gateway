@@ -6,6 +6,7 @@ import {
   RetryableCoreApiError,
   TerminalCoreApiError,
 } from '../core-api/core-api.errors';
+import type { WebviewAuthService } from '../webview-auth/webview-auth.service';
 
 function makeRedis(store: Map<string, string>): Redis {
   return {
@@ -19,6 +20,12 @@ function makeRedis(store: Map<string, string>): Redis {
       return Promise.resolve(existed ? 1 : 0);
     }),
   } as unknown as Redis;
+}
+
+function makeWebviewAuthService(
+  killInventoryCodeForPhone = jest.fn().mockResolvedValue(undefined),
+): WebviewAuthService {
+  return { killInventoryCodeForPhone } as unknown as WebviewAuthService;
 }
 
 interface CachedTokenShape {
@@ -35,7 +42,11 @@ describe('AuthService', () => {
     const store = new Map<string, string>();
     const redis = makeRedis(store);
     const coreApiClient = {} as unknown as CoreApiClient;
-    const service = new AuthService(coreApiClient, redis);
+    const service = new AuthService(
+      coreApiClient,
+      redis,
+      makeWebviewAuthService(),
+    );
 
     const token = await service.getValidToken(phoneNumber);
 
@@ -57,7 +68,11 @@ describe('AuthService', () => {
     const redis = makeRedis(store);
     const refresh = jest.fn();
     const coreApiClient = { refresh } as unknown as CoreApiClient;
-    const service = new AuthService(coreApiClient, redis);
+    const service = new AuthService(
+      coreApiClient,
+      redis,
+      makeWebviewAuthService(),
+    );
 
     const token = await service.getValidToken(phoneNumber);
 
@@ -85,7 +100,11 @@ describe('AuthService', () => {
       emisorId: 'emisor-1',
     });
     const coreApiClient = { refresh } as unknown as CoreApiClient;
-    const service = new AuthService(coreApiClient, redis);
+    const service = new AuthService(
+      coreApiClient,
+      redis,
+      makeWebviewAuthService(),
+    );
 
     const token = await service.getValidToken(phoneNumber);
 
@@ -114,7 +133,11 @@ describe('AuthService', () => {
       .fn()
       .mockRejectedValue(new TerminalCoreApiError('refresh token invalid'));
     const coreApiClient = { refresh } as unknown as CoreApiClient;
-    const service = new AuthService(coreApiClient, redis);
+    const service = new AuthService(
+      coreApiClient,
+      redis,
+      makeWebviewAuthService(),
+    );
 
     const token = await service.getValidToken(phoneNumber);
 
@@ -139,7 +162,11 @@ describe('AuthService', () => {
       .fn()
       .mockRejectedValue(new RetryableCoreApiError('network blip'));
     const coreApiClient = { refresh } as unknown as CoreApiClient;
-    const service = new AuthService(coreApiClient, redis);
+    const service = new AuthService(
+      coreApiClient,
+      redis,
+      makeWebviewAuthService(),
+    );
 
     await expect(service.getValidToken(phoneNumber)).rejects.toThrow(
       RetryableCoreApiError,
@@ -157,7 +184,11 @@ describe('AuthService', () => {
       emisorId: 'emisor-1',
     });
     const coreApiClient = { login } as unknown as CoreApiClient;
-    const service = new AuthService(coreApiClient, redis);
+    const service = new AuthService(
+      coreApiClient,
+      redis,
+      makeWebviewAuthService(),
+    );
 
     await service.login(phoneNumber, 'user@empresa.com', 'secret');
 
@@ -190,7 +221,11 @@ describe('AuthService', () => {
         ],
       ]);
       const redis = makeRedis(store);
-      const service = new AuthService({} as unknown as CoreApiClient, redis);
+      const service = new AuthService(
+        {} as unknown as CoreApiClient,
+        redis,
+        makeWebviewAuthService(),
+      );
 
       await service.logout(phoneNumber);
 
@@ -200,9 +235,97 @@ describe('AuthService', () => {
     it('is a no-op when the phone was never logged in', async () => {
       const store = new Map<string, string>();
       const redis = makeRedis(store);
-      const service = new AuthService({} as unknown as CoreApiClient, redis);
+      const service = new AuthService(
+        {} as unknown as CoreApiClient,
+        redis,
+        makeWebviewAuthService(),
+      );
 
       await expect(service.logout(phoneNumber)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('inventory CTA lifetime', () => {
+    const cachedRecord = (expiresAt: Date): string =>
+      JSON.stringify({
+        accessToken: 'access-1',
+        refreshToken: 'refresh-1',
+        expiresAt: expiresAt.toISOString(),
+        emisorId: 'emisor-1',
+      });
+
+    it('kills the inventory code on logout', async () => {
+      const store = new Map<string, string>([
+        [`auth:${phoneNumber}`, cachedRecord(new Date(Date.now() + 3_600_000))],
+      ]);
+      const kill = jest.fn().mockResolvedValue(undefined);
+      const service = new AuthService(
+        {} as unknown as CoreApiClient,
+        makeRedis(store),
+        makeWebviewAuthService(kill),
+      );
+
+      await service.logout(phoneNumber);
+
+      expect(kill).toHaveBeenCalledWith(phoneNumber);
+    });
+
+    it('kills the inventory code on a fresh login', async () => {
+      const login = jest.fn().mockResolvedValue({
+        accessToken: 'access-1' as CoreApiUserToken,
+        refreshToken: 'refresh-1',
+        expiresAt: new Date(Date.now() + 3_600_000),
+        emisorId: 'emisor-1',
+      });
+      const kill = jest.fn().mockResolvedValue(undefined);
+      const service = new AuthService(
+        { login } as unknown as CoreApiClient,
+        makeRedis(new Map()),
+        makeWebviewAuthService(kill),
+      );
+
+      await service.login(phoneNumber, 'user@empresa.com', 'secret');
+
+      expect(kill).toHaveBeenCalledWith(phoneNumber);
+    });
+
+    it('kills the inventory code when the refresh token is invalid', async () => {
+      const store = new Map<string, string>([
+        [`auth:${phoneNumber}`, cachedRecord(new Date(Date.now() - 1_000))],
+      ]);
+      const refresh = jest
+        .fn()
+        .mockRejectedValue(new TerminalCoreApiError('refresh token invalid'));
+      const kill = jest.fn().mockResolvedValue(undefined);
+      const service = new AuthService(
+        { refresh } as unknown as CoreApiClient,
+        makeRedis(store),
+        makeWebviewAuthService(kill),
+      );
+
+      await service.getValidToken(phoneNumber);
+
+      expect(kill).toHaveBeenCalledWith(phoneNumber);
+    });
+
+    it('does not kill the inventory code on a retryable refresh failure', async () => {
+      const store = new Map<string, string>([
+        [`auth:${phoneNumber}`, cachedRecord(new Date(Date.now() - 1_000))],
+      ]);
+      const refresh = jest
+        .fn()
+        .mockRejectedValue(new RetryableCoreApiError('network blip'));
+      const kill = jest.fn().mockResolvedValue(undefined);
+      const service = new AuthService(
+        { refresh } as unknown as CoreApiClient,
+        makeRedis(store),
+        makeWebviewAuthService(kill),
+      );
+
+      await expect(service.getValidToken(phoneNumber)).rejects.toBeInstanceOf(
+        RetryableCoreApiError,
+      );
+      expect(kill).not.toHaveBeenCalled();
     });
   });
 
@@ -210,7 +333,11 @@ describe('AuthService', () => {
     it('returns null when the phone has never logged in', async () => {
       const store = new Map<string, string>();
       const redis = makeRedis(store);
-      const service = new AuthService({} as unknown as CoreApiClient, redis);
+      const service = new AuthService(
+        {} as unknown as CoreApiClient,
+        redis,
+        makeWebviewAuthService(),
+      );
 
       expect(await service.getEmisorId(phoneNumber)).toBeNull();
     });
@@ -232,6 +359,7 @@ describe('AuthService', () => {
       const service = new AuthService(
         { refresh } as unknown as CoreApiClient,
         redis,
+        makeWebviewAuthService(),
       );
 
       expect(await service.getEmisorId(phoneNumber)).toBe('emisor-1');

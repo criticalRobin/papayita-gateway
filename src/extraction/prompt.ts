@@ -4,6 +4,7 @@ export const extractionPromptTemplate = (text: string) => {
 
 Reglas:
 - tipoIdentificacion: "04" si dice RUC, "05" si dice cédula, si no null.
+- Si piden factura a "consumidor final", pon identificacion: "9999999999999" y tipoIdentificacion: "07".
 - items: uno por producto mencionado. idCliente secuencial ("item-1","item-2"...). textoConsulta = como lo describió el cliente (para buscarlo en catálogo). cantidad = entero mencionado o 1 si no se menciona.
 
 Texto: ${text}`;

@@ -87,7 +87,9 @@ export class DraftBuilderService {
 
     let persona: PersonaRecord | null = null;
 
-    if (tipo && extracted.comprador.identificacion) {
+    if (tipo === '07') {
+      // Consumidor final bypasses lookup — mergeComprador sets defaults
+    } else if (tipo && extracted.comprador.identificacion) {
       persona = await this.personaClient.findByIdentificacion(
         token,
         extracted.comprador.identificacion,

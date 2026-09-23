@@ -10,9 +10,10 @@ export interface ExtractedComprador {
 // 10 digits = cédula ("05"), 13 digits = RUC ("04"), anything else = unknown.
 export function deriveTipoIdentificacion(
   identificacion: string | null,
-): '04' | '05' | null {
+): '04' | '05' | '07' | null {
   if (!identificacion) return null;
   const digits = identificacion.replace(/\D/g, '');
+  if (digits === '9999999999999') return '07';
   if (digits.length === 13) return '04';
   if (digits.length === 10) return '05';
   return null;
@@ -37,13 +38,14 @@ export function mergeComprador(
     };
   }
 
+  const derivedTipo = deriveTipoIdentificacion(extracted.identificacion);
   return {
-    tipoIdentificacion: deriveTipoIdentificacion(extracted.identificacion),
+    tipoIdentificacion: derivedTipo,
     identificacion: extracted.identificacion,
-    razonSocial: null,
+    razonSocial: derivedTipo === '07' ? 'CONSUMIDOR FINAL' : null,
     direccion: null,
     telefono: null,
     email: null,
-    verified: false,
+    verified: derivedTipo === '07',
   };
 }

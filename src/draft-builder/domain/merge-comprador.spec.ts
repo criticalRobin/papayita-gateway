@@ -22,7 +22,6 @@ describe('mergeComprador', () => {
   const extracted = {
     tipoIdentificacion: null,
     identificacion: '1850137918',
-    razonSocial: 'Matias Tite',
   };
 
   it('prefers the persona record when found, and marks verified: true', () => {
@@ -55,11 +54,28 @@ describe('mergeComprador', () => {
     expect(result).toEqual({
       tipoIdentificacion: '05',
       identificacion: '1850137918',
-      razonSocial: 'Matias Tite',
+      razonSocial: null,
       direccion: null,
       telefono: null,
       email: null,
       verified: false,
+    });
+  });
+
+  it('sets razonSocial to CONSUMIDOR FINAL and verified: true when identificacion is 9999999999999', () => {
+    const result = mergeComprador(
+      { tipoIdentificacion: null, identificacion: '9999999999999' },
+      null,
+    );
+
+    expect(result).toEqual({
+      tipoIdentificacion: '07',
+      identificacion: '9999999999999',
+      razonSocial: 'CONSUMIDOR FINAL',
+      direccion: null,
+      telefono: null,
+      email: null,
+      verified: true,
     });
   });
 

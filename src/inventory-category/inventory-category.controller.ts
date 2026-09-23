@@ -68,7 +68,11 @@ export class InventoryCategoryController {
   @Delete(':id')
   async remove(@Req() req: RequestWithWebviewSession, @Param('id') id: string) {
     const token = await this.getToken(req);
-    return this.inventoryCategoryClient.delete(token, id);
+    return this.inventoryCategoryClient.delete(
+      token,
+      req.webviewSession.emisorId!,
+      id,
+    );
   }
 
   private async getToken(

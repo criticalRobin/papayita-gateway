@@ -20,6 +20,7 @@ export interface InventoryCategoryClient {
   ): Promise<InventoryCategory>;
   delete(
     token: CoreApiUserToken,
+    emisorId: string,
     categoryId: string,
   ): Promise<InventoryCategory>;
 }

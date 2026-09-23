@@ -15,6 +15,7 @@ import type { InventoryCategoryClient } from '../inventory-category/inventory-ca
 import { TAX_CATALOG_CLIENT } from '../tax-catalog/tax-catalog.service';
 import type { TaxCatalogClient } from '../tax-catalog/tax-catalog-client.interface';
 import { hasCodigoPorcentaje } from '../tax-catalog/domain/tax';
+import { inventoryProductCacheKey } from './inventory-product-cache-key';
 
 export const INVENTORY_PRODUCT_REDIS_CLIENT = 'INVENTORY_PRODUCT_REDIS_CLIENT';
 export const INVENTORY_PRODUCT_CLIENT = 'INVENTORY_PRODUCT_CLIENT';
@@ -78,13 +79,14 @@ export class InventoryProductService implements InventoryProductClient {
 
   async delete(
     token: CoreApiUserToken,
+    emisorId: string,
     productId: string,
   ): Promise<InventoryProduct> {
     const deleted = await this.coreApiClient.delete<InventoryProduct>(
-      `/inventario/productos/${productId}`,
+      `/inventario/productos/${productId}?emisorId=${emisorId}`,
       token,
     );
-    await this.refresh(token, deleted.emisorId);
+    await this.refresh(token, emisorId);
     return deleted;
   }
 
@@ -151,6 +153,6 @@ export class InventoryProductService implements InventoryProductClient {
   }
 
   private key(emisorId: string): string {
-    return `inventory-product:${emisorId}`;
+    return inventoryProductCacheKey(emisorId);
   }
 }

@@ -16,6 +16,7 @@ function makeRedis(): Redis {
       return Promise.resolve('OK');
     }),
     get: jest.fn((key: string) => Promise.resolve(store.get(key) ?? null)),
+    del: jest.fn((key: string) => Promise.resolve(store.delete(key) ? 1 : 0)),
   } as unknown as Redis;
 }
 
@@ -124,6 +125,7 @@ describe('InventoryCategoryService', () => {
 
   it('delete() removes from Core API then refreshes the deleted category emisor cache', async () => {
     const redis = makeRedis();
+    const redisDel = jest.spyOn(redis, 'del');
     const deleted = makeCategory({ id: 'cat-1' });
     const del = jest.fn().mockResolvedValue(deleted);
     const get = jest.fn().mockResolvedValue([]);
@@ -134,13 +136,17 @@ describe('InventoryCategoryService', () => {
       makeConfig(),
     );
 
-    const result = await service.delete(TOKEN, 'cat-1');
+    const result = await service.delete(TOKEN, EMISOR_ID, 'cat-1');
 
-    expect(del).toHaveBeenCalledWith('/inventario/categorias/cat-1', TOKEN);
+    expect(del).toHaveBeenCalledWith(
+      `/inventario/categorias/cat-1?emisorId=${EMISOR_ID}`,
+      TOKEN,
+    );
     expect(get).toHaveBeenCalledWith(
       `/inventario/categorias?emisorId=${EMISOR_ID}`,
       TOKEN,
     );
+    expect(redisDel).toHaveBeenCalledWith(`inventory-product:${EMISOR_ID}`);
     expect(result).toEqual(deleted);
   });
 });

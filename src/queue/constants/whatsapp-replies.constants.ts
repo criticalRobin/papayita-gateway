@@ -12,11 +12,13 @@ export const INFO_REQUEST_REPLY =
 export const OUT_OF_CONTEXT_REPLY =
   'No pudimos entender tu mensaje. Si quieres emitir una factura, cuéntame los datos de la venta.';
 export const NOT_AUTHENTICATED_REPLY =
-  'Para emitir facturas primero debes vincular tu cuenta. Escribe "iniciar sesión" para continuar.';
+  'Actualmente no tienes una sesión activa. Escribe "iniciar sesión" para comenzar.';
 export const LOGOUT_SUCCESS_REPLY =
   'Cerraste tu sesión correctamente. Escribe "iniciar sesión" cuando quieras volver a vincular tu cuenta.';
 export const LOGOUT_FAILURE_ATTEMPT =
   'Tu sesión actualente esta inactiva, no es necesario cerrar sesión. Si quieres iniciar sesión, escribe "iniciar sesión".  ';
+export const LOGIN_ALREADY_AUTHENTICATED_REPLY =
+  'Tu cuenta ya está vinculada y lista para facturar.';
 export const LOGIN_CTA_BODY =
   'Vincula tu cuenta para emitir facturas por WhatsApp.';
 export const LOGIN_CTA_BUTTON = 'Iniciar sesión';

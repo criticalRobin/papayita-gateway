@@ -68,6 +68,7 @@ import {
   INVENTORY_FAILURE_REPLY,
   HELP_REPLY,
   LOGOUT_FAILURE_ATTEMPT,
+  LOGIN_ALREADY_AUTHENTICATED_REPLY,
 } from '../constants/whatsapp-replies.constants';
 
 // Accent-insensitive: typing "sesion" without the tilde on a phone keyboard
@@ -157,6 +158,16 @@ export class WhatsappInboundProcessor extends WorkerHost {
         ),
       );
 
+      return;
+    }
+
+    if (type === InboundMessageType.TEXT && isLoginCommand(text) && token) {
+      await this.sendOrLogTerminal(job.id, () =>
+        this.whatsappClient.sendTextMessage(
+          phoneNumber,
+          LOGIN_ALREADY_AUTHENTICATED_REPLY,
+        ),
+      );
       return;
     }
 

@@ -12,6 +12,7 @@ import { EMISOR_CLIENT } from '../emisor/emisor.module';
 import type { EmisorClient } from '../emisor/emisor-client.interface';
 import { PERSONA_LOOKUP_CLIENT } from '../persona/persona.module';
 import type { PersonaLookupClient } from '../persona/persona-lookup.interface';
+import { PersonaNotFoundError } from '../persona/persona.errors';
 import { ConversationStateService } from '../conversation-state/conversation-state.service';
 import { WebviewAuthService } from '../webview-auth/webview-auth.service';
 import { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
@@ -226,14 +227,17 @@ export class CreditNoteService {
     );
     const data = parseComprobanteXml(xml.toString('utf-8'));
 
-    const persona = await this.personaClient.findByIdentificacion(
-      token,
-      data.comprador.identificacion,
-    );
-    if (persona) {
+    try {
+      const persona = await this.personaClient.findByIdentificacion(
+        token,
+        data.comprador.identificacion,
+      );
       data.comprador.direccion = persona.direccion;
       data.comprador.telefono = persona.telefono;
       data.comprador.email = persona.email;
+    } catch (error) {
+      // Not found → keep the XML's comprador data unenriched
+      if (!(error instanceof PersonaNotFoundError)) throw error;
     }
 
     return data;

@@ -2,6 +2,7 @@ import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import type { AuthService } from '../auth/auth.service';
 import type { EmisorClient } from '../emisor/emisor-client.interface';
 import type { PersonaLookupClient } from '../persona/persona-lookup.interface';
+import { PersonaNotFoundError } from '../persona/persona.errors';
 import type { ConversationStateService } from '../conversation-state/conversation-state.service';
 import type { PendingEmissionStore } from '../invoice-emission/pending-emission.store';
 import type { EmissionWatchdogService } from '../invoice-emission/emission-watchdog.service';
@@ -119,7 +120,9 @@ function makeService(overrides: MockOverrides = {}) {
     ...overrides.emisorClient,
   } as unknown as EmisorClient;
   const personaClient = {
-    findByIdentificacion: jest.fn().mockResolvedValue(null),
+    findByIdentificacion: jest
+      .fn()
+      .mockRejectedValue(new PersonaNotFoundError('not found')),
     ...overrides.personaClient,
   } as unknown as PersonaLookupClient;
   const emitir =

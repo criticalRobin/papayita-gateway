@@ -4,6 +4,7 @@ import {
   RetryableCoreApiError,
   TerminalCoreApiError,
 } from '../core-api/core-api.errors';
+import { PersonaNotFoundError } from './persona.errors';
 import { PersonaService } from './persona.service';
 
 function makeCoreApiClient(get: jest.Mock): CoreApiClient {
@@ -32,15 +33,31 @@ describe('PersonaService', () => {
     expect(result).toEqual(record);
   });
 
-  it('returns null on a 404 (not found is expected, not an error)', async () => {
+  it("throws PersonaNotFoundError carrying Core API's message on a 404", async () => {
+    const coreApiMessage =
+      'La persona con identificación "1850137930" no existe en el SRI. Verifique el número de cedula o RUC.';
+    const get = jest
+      .fn()
+      .mockRejectedValue(
+        new TerminalCoreApiError('not found', 404, coreApiMessage),
+      );
+    const service = new PersonaService(makeCoreApiClient(get));
+
+    const promise = service.findByIdentificacion(token, '1850137930');
+
+    await expect(promise).rejects.toThrow(PersonaNotFoundError);
+    await expect(promise).rejects.toThrow(coreApiMessage);
+  });
+
+  it('falls back to a generic message on a 404 without a Core API message', async () => {
     const get = jest
       .fn()
       .mockRejectedValue(new TerminalCoreApiError('not found', 404));
     const service = new PersonaService(makeCoreApiClient(get));
 
-    const result = await service.findByIdentificacion(token, '0000000000');
-
-    expect(result).toBeNull();
+    await expect(
+      service.findByIdentificacion(token, '0000000000'),
+    ).rejects.toThrow('No se encontro información del cliente');
   });
 
   it('re-throws a terminal error that is not a 404', async () => {

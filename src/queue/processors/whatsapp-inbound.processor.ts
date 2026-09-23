@@ -18,7 +18,8 @@ import { ConversationStateService } from '../../conversation-state/conversation-
 import { AuthService } from '../../auth/auth.service';
 import { WebviewAuthService } from '../../webview-auth/webview-auth.service';
 import { DraftBuilderService } from '../../draft-builder/draft-builder.service';
-import { UnresolvedCatalogItemsError, PersonaNotFoundError } from '../../draft-builder/domain/errors';
+import { UnresolvedCatalogItemsError } from '../../draft-builder/domain/errors';
+import { PersonaNotFoundError } from '../../persona/persona.errors';
 import { CreditNoteService } from '../../credit-note/credit-note.service';
 import { ExtractionParseError } from '../../extraction/extraction.errors';
 import { TerminalCoreApiError } from '../../core-api/core-api.errors';
@@ -429,11 +430,9 @@ export class WhatsappInboundProcessor extends WorkerHost {
         this.logger.warn(
           `billing attempt for job ${jobId} failed: persona not found`,
         );
+        // Core API's 404 message is already plain-language Spanish — relay as-is
         await this.sendOrLogTerminal(jobId, () =>
-          this.whatsappClient.sendTextMessage(
-            phoneNumber,
-            error.message,
-          ),
+          this.whatsappClient.sendTextMessage(phoneNumber, error.message),
         );
         return;
       }

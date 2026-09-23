@@ -8,9 +8,3 @@ export class UnresolvedCatalogItemsError extends Error {
     super(`no catalog candidates for: ${missingTerms.join(', ')}`);
   }
 }
-
-export class PersonaNotFoundError extends Error {
-  constructor(message: string) {
-    super(message);
-  }
-}

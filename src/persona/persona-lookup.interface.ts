@@ -14,10 +14,10 @@ export interface PersonaRecord {
 
 export interface PersonaLookupClient {
   // GET /personas/buscar/{identificacion} — 10 digits is cédula, 13 is RUC
-  // (caller decides which, never the LLM). Returns null on a 404 (not found
-  // is an expected outcome, not an error).
+  // (caller decides which, never the LLM). Throws PersonaNotFoundError on a
+  // 404, carrying Core API's user-facing message.
   findByIdentificacion(
     token: CoreApiUserToken,
     identificacion: string,
-  ): Promise<PersonaRecord | null>;
+  ): Promise<PersonaRecord>;
 }

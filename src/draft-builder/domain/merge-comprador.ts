@@ -4,7 +4,6 @@ import { CompradorDraft } from './types';
 export interface ExtractedComprador {
   tipoIdentificacion: string | null;
   identificacion: string | null;
-  razonSocial: string | null;
 }
 
 // Digit-count decides cédula vs RUC — code decides, never the LLM.
@@ -41,7 +40,7 @@ export function mergeComprador(
   return {
     tipoIdentificacion: deriveTipoIdentificacion(extracted.identificacion),
     identificacion: extracted.identificacion,
-    razonSocial: extracted.razonSocial,
+    razonSocial: null,
     direccion: null,
     telefono: null,
     email: null,

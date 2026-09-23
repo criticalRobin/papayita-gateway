@@ -122,8 +122,8 @@ export class DraftBuilderService {
       correlationId,
       comprador,
       items,
-      precioTotalMencionado: extracted.precioTotalMencionado,
-      formaPagoMencionada: extracted.formaPagoMencionada,
+      precioTotalMencionado: null,
+      formaPagoMencionada: null,
     };
 
     await this.conversationStateService.applyEvent(phoneNumber, {

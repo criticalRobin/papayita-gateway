@@ -4,7 +4,6 @@ export interface ExtractedItem {
   idCliente: string;
   textoConsulta: string;
   cantidad: number;
-  precioMencionado: number | null;
 }
 
 export function mergeCatalogResults(
@@ -32,7 +31,7 @@ export function mergeCatalogResults(
         descripcion: selected?.nombre ?? item.textoConsulta,
         unidadMedida: selected?.unidadMedida ?? null,
         cantidad: item.cantidad,
-        precioUnitario: selected?.precioUnitario ?? item.precioMencionado,
+        precioUnitario: selected?.precioUnitario ?? null,
         descuento: 0,
       },
     };

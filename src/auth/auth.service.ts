@@ -8,6 +8,7 @@ import type {
 } from '../core-api/core-api-client.interface';
 import type { CoreApiUserToken } from '../core-api/core-api-token';
 import { TerminalCoreApiError } from '../core-api/core-api.errors';
+import { WebviewAuthService } from '../webview-auth/webview-auth.service';
 
 export const AUTH_REDIS_CLIENT = 'AUTH_REDIS_CLIENT';
 
@@ -25,6 +26,7 @@ export class AuthService {
   constructor(
     @Inject(CORE_API_CLIENT) private readonly coreApiClient: CoreApiClient,
     @Inject(AUTH_REDIS_CLIENT) private readonly redis: Redis,
+    private readonly webviewAuthService: WebviewAuthService,
   ) {}
 
   // Returns null when the phone isn't authenticated, or when its refresh
@@ -50,7 +52,7 @@ export class AuthService {
         this.logger.warn(
           `refresh token invalid for phone=${maskTail(phoneNumber)}, clearing — re-login required`,
         );
-        await this.redis.del(this.key(phoneNumber));
+        await this.clearSession(phoneNumber);
         return null;
       }
       throw error;
@@ -63,6 +65,9 @@ export class AuthService {
     password: string,
   ): Promise<void> {
     const token = await this.coreApiClient.login(email, password, phoneNumber);
+    // A fresh login never inherits an "administrar productos" link minted
+    // during a previous session.
+    await this.webviewAuthService.killInventoryCodeForPhone(phoneNumber);
     await this.cache(phoneNumber, token);
     this.logger.log(`phone=${maskTail(phoneNumber)} authenticated`);
   }
@@ -71,7 +76,7 @@ export class AuthService {
   // API. del() on a nonexistent key resolves without error, so this is safe
   // to call whether or not the phone was ever authenticated.
   async logout(phoneNumber: string): Promise<void> {
-    await this.redis.del(this.key(phoneNumber));
+    await this.clearSession(phoneNumber);
     this.logger.log(`phone=${maskTail(phoneNumber)} logged out`);
   }
 
@@ -83,6 +88,15 @@ export class AuthService {
     if (!raw) return null;
     const cached = JSON.parse(raw) as CachedToken;
     return cached.emisorId;
+  }
+
+  // The inventory CTA code has no TTL of its own — its lifetime is this auth
+  // session, so it dies whenever the auth record does.
+  private async clearSession(phoneNumber: string): Promise<void> {
+    await Promise.all([
+      this.redis.del(this.key(phoneNumber)),
+      this.webviewAuthService.killInventoryCodeForPhone(phoneNumber),
+    ]);
   }
 
   private async cache(

@@ -239,12 +239,12 @@ describe('WebviewAuthService', () => {
       );
 
       const code = await service.mintInventoryCode('5219999999999');
-      const phoneNumber = await service.consumeInventoryCode(code);
+      const phoneNumber = await service.resolveInventoryCode(code);
 
       expect(phoneNumber).toBe('5219999999999');
     });
 
-    it('is single-use — a second consume of the same code returns null', async () => {
+    it('is reusable — resolving the same code repeatedly keeps working', async () => {
       const redis = makeRedis();
       const service = new WebviewAuthService(
         redis,
@@ -253,10 +253,59 @@ describe('WebviewAuthService', () => {
       );
 
       const code = await service.mintInventoryCode('5219999999999');
-      await service.consumeInventoryCode(code);
-      const secondAttempt = await service.consumeInventoryCode(code);
+      await service.resolveInventoryCode(code);
+      const secondAttempt = await service.resolveInventoryCode(code);
 
-      expect(secondAttempt).toBeNull();
+      expect(secondAttempt).toBe('5219999999999');
+    });
+
+    it('stores the code with no TTL — lifetime is tied to the auth session', async () => {
+      const redis = makeRedis();
+      const service = new WebviewAuthService(
+        redis,
+        makeConfig(),
+        makeWebviewSessionService(),
+      );
+
+      const code = await service.mintInventoryCode('5219999999999');
+      const { set } = redis as unknown as { set: jest.Mock };
+
+      expect(set).toHaveBeenCalledWith(
+        `webview-inventory:${code}`,
+        '5219999999999',
+      );
+    });
+
+    it('minting a new code invalidates the previous one for the same phone', async () => {
+      const redis = makeRedis();
+      const service = new WebviewAuthService(
+        redis,
+        makeConfig(),
+        makeWebviewSessionService(),
+      );
+
+      const oldCode = await service.mintInventoryCode('5219999999999');
+      const newCode = await service.mintInventoryCode('5219999999999');
+
+      expect(await service.resolveInventoryCode(oldCode)).toBeNull();
+      expect(await service.resolveInventoryCode(newCode)).toBe('5219999999999');
+    });
+
+    it('killInventoryCodeForPhone burns the live code and is idempotent', async () => {
+      const redis = makeRedis();
+      const service = new WebviewAuthService(
+        redis,
+        makeConfig(),
+        makeWebviewSessionService(),
+      );
+
+      const code = await service.mintInventoryCode('5219999999999');
+      await service.killInventoryCodeForPhone('5219999999999');
+
+      expect(await service.resolveInventoryCode(code)).toBeNull();
+      await expect(
+        service.killInventoryCodeForPhone('5219999999999'),
+      ).resolves.toBeUndefined();
     });
 
     it('returns null for an unknown code', async () => {
@@ -267,7 +316,7 @@ describe('WebviewAuthService', () => {
         makeWebviewSessionService(),
       );
 
-      const result = await service.consumeInventoryCode('does-not-exist');
+      const result = await service.resolveInventoryCode('does-not-exist');
 
       expect(result).toBeNull();
     });

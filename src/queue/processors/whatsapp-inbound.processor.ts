@@ -18,7 +18,7 @@ import { ConversationStateService } from '../../conversation-state/conversation-
 import { AuthService } from '../../auth/auth.service';
 import { WebviewAuthService } from '../../webview-auth/webview-auth.service';
 import { DraftBuilderService } from '../../draft-builder/draft-builder.service';
-import { UnresolvedCatalogItemsError } from '../../draft-builder/domain/errors';
+import { UnresolvedCatalogItemsError, PersonaNotFoundError } from '../../draft-builder/domain/errors';
 import { CreditNoteService } from '../../credit-note/credit-note.service';
 import { ExtractionParseError } from '../../extraction/extraction.errors';
 import { TerminalCoreApiError } from '../../core-api/core-api.errors';
@@ -396,6 +396,9 @@ export class WhatsappInboundProcessor extends WorkerHost {
         phoneNumber,
         extracted,
       );
+
+      console.log('draft created', correlationId);
+
       const code = await this.webviewAuthService.mintExchangeCode(
         phoneNumber,
         correlationId,
@@ -418,6 +421,18 @@ export class WhatsappInboundProcessor extends WorkerHost {
           this.whatsappClient.sendTextMessage(
             phoneNumber,
             error.reason === 'PLAN_LIMIT' ? PLAN_LIMIT_REPLY : NOT_READY_REPLY,
+          ),
+        );
+        return;
+      }
+      if (error instanceof PersonaNotFoundError) {
+        this.logger.warn(
+          `billing attempt for job ${jobId} failed: persona not found`,
+        );
+        await this.sendOrLogTerminal(jobId, () =>
+          this.whatsappClient.sendTextMessage(
+            phoneNumber,
+            error.message,
           ),
         );
         return;

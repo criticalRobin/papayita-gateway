@@ -16,7 +16,10 @@ import type {
   CatalogSearchResultGroup,
 } from '../catalog/catalog-search.interface';
 import { PERSONA_LOOKUP_CLIENT } from '../persona/persona.module';
-import type { PersonaLookupClient } from '../persona/persona-lookup.interface';
+import type {
+  PersonaLookupClient,
+  PersonaRecord,
+} from '../persona/persona-lookup.interface';
 import { EMISOR_CLIENT } from '../emisor/emisor.module';
 import type { EmisorClient } from '../emisor/emisor-client.interface';
 import { INVOICE_EMISSION_CLIENT } from '../invoice-emission/invoice-emission.module';
@@ -37,7 +40,10 @@ import { resolveCandidates } from './domain/resolve-candidates';
 import { mergeCatalogResults } from './domain/merge-catalog-results';
 import { mergeProductoDetalles } from './domain/merge-producto-detalles';
 import { findUnresolvedItems } from './domain/find-unresolved-items';
-import { UnresolvedCatalogItemsError } from './domain/errors';
+import {
+  UnresolvedCatalogItemsError,
+  PersonaNotFoundError,
+} from './domain/errors';
 import { assembleInvoice } from './domain/assemble-invoice';
 import { CandidateResolution, Draft, FinalInvoice } from './domain/types';
 import { ConfirmDraftDto } from './dto/confirm-draft.dto';
@@ -79,13 +85,21 @@ export class DraftBuilderService {
 
     const tipo = deriveTipoIdentificacion(extracted.comprador.identificacion);
 
-    const persona =
-      tipo && extracted.comprador.identificacion
-        ? await this.personaClient.findByIdentificacion(
-            token,
-            extracted.comprador.identificacion,
-          )
-        : null;
+    let persona: PersonaRecord | null = null;
+
+    if (tipo && extracted.comprador.identificacion) {
+      persona = await this.personaClient.findByIdentificacion(
+        token,
+        extracted.comprador.identificacion,
+      );
+
+      if (!persona) {
+        throw new PersonaNotFoundError(
+          'No se encontro información del cliente, por favor intenta nuevamente con su número de cédula.',
+        );
+      }
+    }
+
     const comprador = mergeComprador(extracted.comprador, persona);
 
     const terminos = extracted.items.map((item) => item.textoConsulta);

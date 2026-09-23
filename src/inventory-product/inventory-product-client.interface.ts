@@ -18,5 +18,9 @@ export interface InventoryProductClient {
     productId: string,
     data: CreateOrUpdateInventoryProductDto,
   ): Promise<InventoryProduct>;
-  delete(token: CoreApiUserToken, productId: string): Promise<InventoryProduct>;
+  delete(
+    token: CoreApiUserToken,
+    emisorId: string,
+    productId: string,
+  ): Promise<InventoryProduct>;
 }

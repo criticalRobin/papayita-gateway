@@ -251,9 +251,12 @@ describe('InventoryProductService', () => {
       const del = jest.fn().mockResolvedValue(deleted);
       const { service, coreApiClient } = makeService({ delete: del });
 
-      const result = await service.delete(TOKEN, 'prod-1');
+      const result = await service.delete(TOKEN, EMISOR_ID, 'prod-1');
 
-      expect(del).toHaveBeenCalledWith('/inventario/productos/prod-1', TOKEN);
+      expect(del).toHaveBeenCalledWith(
+        `/inventario/productos/prod-1?emisorId=${EMISOR_ID}`,
+        TOKEN,
+      );
       expect(coreApiClient.get).toHaveBeenCalled();
       expect(result).toEqual(deleted);
     });

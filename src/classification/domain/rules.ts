@@ -108,12 +108,15 @@ function looksLikeQuestion(normalized: string): boolean {
 const ARTICLE = '(el\\s+|la\\s+|un\\s+|una\\s+)?';
 const BILLING_ACTION_PATTERNS = [
   new RegExp(
-    `\\b(emite|genera|generame|hazme|haceme|dame)\\s+${ARTICLE}(factura|comprobante)`,
+    `\\b(por\\s+favor\\s+)?(emite|genera|generame|hazme|haceme|hagas|dame)\\s+${ARTICLE}(factura|comprobante)`,
   ),
   new RegExp(
-    `\\b(quiero|necesito)\\s+${ARTICLE}(factura|facturar|comprobante|emitir\\s+${ARTICLE}(factura|comprobante))`,
+    `\\b(quiero|necesito|ayudame)(\\s+con)?(\\s+por\\s+favor)?(\\s+que\\s+me)?(\\s+(hagas|emitas|generes))?\\s+${ARTICLE}(factura|facturar|comprobante|emitir\\s+${ARTICLE}(factura|comprobante))`,
   ),
   /\bfactura(me)?\s+(a\s+nombre|esta|esa|la\s+venta|por\s+favor)/,
+  /\b(factura|comprobante)\s+(para|de\s+la\s+venta)\b/,
+  /\b\d+\s+[a-z]+.*\b(factura|comprobante|facturar)\b/,
+  /\b(factura|comprobante|facturar)\b.*\b\d+\s+[a-z]+/,
 ];
 
 export function matchBillingAttempt(normalized: string): boolean {

@@ -23,7 +23,7 @@ export interface InvoiceSkeleton {
 }
 
 export interface CompradorDraft {
-  tipoIdentificacion: '04' | '05' | null;
+  tipoIdentificacion: '04' | '05' | '07' | null;
   identificacion: string | null;
   razonSocial: string | null;
   direccion: string | null;

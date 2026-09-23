@@ -18,7 +18,7 @@ import { ConversationStateService } from '../../conversation-state/conversation-
 import { AuthService } from '../../auth/auth.service';
 import { WebviewAuthService } from '../../webview-auth/webview-auth.service';
 import { DraftBuilderService } from '../../draft-builder/draft-builder.service';
-import { UnresolvedCatalogItemsError } from '../../draft-builder/domain/errors';
+import { UnresolvedCatalogItemsError, PersonaNotFoundError } from '../../draft-builder/domain/errors';
 import { CreditNoteService } from '../../credit-note/credit-note.service';
 import { ExtractionParseError } from '../../extraction/extraction.errors';
 import { TerminalCoreApiError } from '../../core-api/core-api.errors';
@@ -36,81 +36,40 @@ import type {
   PurchaseRegisteredResponse,
 } from '../../purchases/purchases-client.interface';
 
-// Hardcoded, deterministic replies — no LLM call here (project-info.md constraint #5).
-const STT_FAILURE_REPLY =
-  'No pudimos entender tu nota de voz, por favor escribe tu mensaje.';
-const UNSUPPORTED_REPLY =
-  'No pudimos procesar ese tipo de mensaje, por favor escribe tu mensaje en texto.';
-const GREETING_REPLY =
-  '¡Hola! Soy el asistente de facturación. Cuéntame qué necesitas facturar y te ayudo.';
-const INFO_REQUEST_REPLY =
-  'Con este servicio puedes emitir tus facturas autorizadas por el SRI directamente por WhatsApp. Cuéntame los datos de la venta cuando quieras facturar.';
-const OUT_OF_CONTEXT_REPLY =
-  'No pudimos entender tu mensaje. Si quieres emitir una factura, cuéntame los datos de la venta.';
-const NOT_AUTHENTICATED_REPLY =
-  'Para emitir facturas primero debes vincular tu cuenta. Escribe "iniciar sesión" para continuar.';
-const LOGOUT_SUCCESS_REPLY =
-  'Cerraste tu sesión correctamente. Escribe "iniciar sesión" cuando quieras volver a vincular tu cuenta.';
-const LOGIN_CTA_BODY = 'Vincula tu cuenta para emitir facturas por WhatsApp.';
-const LOGIN_CTA_BUTTON = 'Iniciar sesión';
-const DRAFT_CTA_BODY =
-  'Ya casi terminamos tu factura. Revisa y confirma los datos aquí:';
-const DRAFT_CTA_BUTTON = 'Ver borrador';
-const BILLING_FAILURE_REPLY =
-  'No pudimos procesar tu solicitud de facturación, por favor intenta de nuevo.';
-const UNRESOLVED_PRODUCTS_REPLY = (missingTerms: string[]): string =>
-  `No encontramos en tu catálogo: ${missingTerms.join(', ')}. Agrégalos a tu inventario o revisa el nombre e intenta de nuevo.`;
-const INVENTORY_CTA_BODY = 'Administra tus categorías y productos desde aquí:';
-const INVENTORY_CTA_BUTTON = 'Ver inventario';
-const CREDIT_NOTE_CTA_BODY =
-  'Selecciona la factura y los productos para tu nota de crédito aquí:';
-const CREDIT_NOTE_CTA_BUTTON = 'Ver facturas';
-const CREDIT_NOTE_FAILURE_REPLY =
-  'No pudimos procesar tu solicitud de nota de crédito, por favor intenta de nuevo.';
-const CREDIT_NOTE_NO_INVOICES_REPLY =
-  'No encontramos facturas autorizadas para ese cliente, verifica el número e intenta de nuevo.';
-const CREDIT_NOTE_NO_ID_REPLY =
-  'No pudimos identificar el número de cédula/RUC del cliente, por favor incluye el número completo.';
-const PURCHASE_INVALID_FILE_REPLY =
-  'Solo aceptamos el archivo XML de la factura de compra, por favor envíalo como documento adjunto.';
-const PURCHASE_FAILURE_REPLY =
-  'No pudimos registrar tu compra, por favor verifica el XML e intenta de nuevo.';
-const PURCHASE_SUCCESS_REPLY = (response: PurchaseRegisteredResponse): string =>
-  `Compra registrada: ${response.proveedorRazonSocial}, comprobante ${response.establecimiento}-${response.puntoEmision}-${response.secuencial}, total $${response.importeTotal.toFixed(2)}.`;
-const PLAN_LIMIT_REPLY =
-  'Alcanzaste el límite de comprobantes de tu plan este mes. Contáctanos para cambiar de plan o activar facturación bajo consumo.';
-const NOT_READY_REPLY =
-  'Tu cuenta aún no está lista para facturar. Contáctanos para revisar tu configuración.';
-const CREDIT_NOTE_PLAN_REPLY =
-  'Las notas de crédito no están disponibles en tu plan actual. Contáctanos para actualizar tu plan.';
-const PRODUCT_MANAGEMENT_PLAN_REPLY =
-  'La administración de productos no está disponible en tu plan actual. Contáctanos para actualizar tu plan.';
-const PURCHASE_REGISTRATION_PLAN_REPLY =
-  'El registro de compras no está disponible en tu plan actual. Contáctanos para actualizar tu plan.';
-const INVENTORY_FAILURE_REPLY =
-  'No pudimos abrir tu inventario, por favor intenta de nuevo.';
-const HELP_REPLY = `🧾 *¿Qué puedo hacer por ti?*
-
-*1. Facturar* 🧾
-Escríbeme o mándame una nota de voz con los datos de tu venta.
-Ejemplo: "Factura 2 pantalones y una chompa al cliente 1850137918"
-
-*2. Nota de crédito* ↩️
-Dime la cédula o RUC del cliente y te muestro sus facturas.
-Ejemplo: "Nota de crédito para el cliente 1850137918"
-
-*3. Administrar productos* 📦
-Escribe "administrar productos" para editar tu catálogo e inventario.
-
-*4. Registrar una compra* 📄
-Envía el archivo XML de tu factura de compra como documento adjunto.
-
-*Otros comandos*
-• "iniciar sesión" → vincula tu cuenta de WhatsApp
-• "cerrar sesión" → cierra tu sesión
-• "ayuda" → muestra este mensaje otra vez
-
-Si una función no está disponible, revisa tu plan o contáctanos para más información.`;
+import {
+  STT_FAILURE_REPLY,
+  UNSUPPORTED_REPLY,
+  GREETING_REPLY,
+  INFO_REQUEST_REPLY,
+  OUT_OF_CONTEXT_REPLY,
+  NOT_AUTHENTICATED_REPLY,
+  LOGOUT_SUCCESS_REPLY,
+  LOGIN_CTA_BODY,
+  LOGIN_CTA_BUTTON,
+  DRAFT_CTA_BODY,
+  DRAFT_CTA_BUTTON,
+  BILLING_FAILURE_REPLY,
+  UNRESOLVED_PRODUCTS_REPLY,
+  INVENTORY_CTA_BODY,
+  INVENTORY_CTA_BUTTON,
+  CREDIT_NOTE_CTA_BODY,
+  CREDIT_NOTE_CTA_BUTTON,
+  CREDIT_NOTE_FAILURE_REPLY,
+  CREDIT_NOTE_NO_INVOICES_REPLY,
+  CREDIT_NOTE_NO_ID_REPLY,
+  PURCHASE_INVALID_FILE_REPLY,
+  PURCHASE_FAILURE_REPLY,
+  PURCHASE_SUCCESS_REPLY,
+  PLAN_LIMIT_REPLY,
+  NOT_READY_REPLY,
+  CREDIT_NOTE_PLAN_REPLY,
+  PRODUCT_MANAGEMENT_PLAN_REPLY,
+  PURCHASE_REGISTRATION_PLAN_REPLY,
+  INVENTORY_FAILURE_REPLY,
+  HELP_REPLY,
+  LOGOUT_FAILURE_ATTEMPT,
+  LOGIN_ALREADY_AUTHENTICATED_REPLY,
+} from '../constants/whatsapp-replies.constants';
 
 // Accent-insensitive: typing "sesion" without the tilde on a phone keyboard
 // is common. "login" is accepted as a plain-English fallback.
@@ -177,14 +136,38 @@ export class WhatsappInboundProcessor extends WorkerHost {
   async process(job: Job<InboundMessageJobDto>): Promise<void> {
     const { phoneNumber, type, text, mediaId, fileName, whatsappMessageId } =
       job.data;
+    const token = await this.authService.getValidToken(phoneNumber);
     this.logger.log(`processing ${type} message, job ${job.id}`);
     await this.whatsappClient.markAsRead(whatsappMessageId);
 
     // "cerrar sesión" runs before the auth gate and independent of it —
     // always the exact same confirmation whether or not the phone was
     // authenticated, never NOT_AUTHENTICATED_REPLY/login-CTA. No LLM cost.
-    if (type === InboundMessageType.TEXT && isLogoutCommand(text)) {
+    if (type === InboundMessageType.TEXT && isLogoutCommand(text) && token) {
       await this.handleLogoutCommand(phoneNumber, job.id);
+      return;
+    } else if (
+      type === InboundMessageType.TEXT &&
+      isLogoutCommand(text) &&
+      !token
+    ) {
+      await this.sendOrLogTerminal(job.id, () =>
+        this.whatsappClient.sendTextMessage(
+          phoneNumber,
+          LOGOUT_FAILURE_ATTEMPT,
+        ),
+      );
+
+      return;
+    }
+
+    if (type === InboundMessageType.TEXT && isLoginCommand(text) && token) {
+      await this.sendOrLogTerminal(job.id, () =>
+        this.whatsappClient.sendTextMessage(
+          phoneNumber,
+          LOGIN_ALREADY_AUTHENTICATED_REPLY,
+        ),
+      );
       return;
     }
 
@@ -201,7 +184,7 @@ export class WhatsappInboundProcessor extends WorkerHost {
     // Auth gate runs before anything else — no STT/classification/LLM cost is
     // spent while the phone isn't authenticated. See project-info.md's
     // "Conversation flow" / "Auth model".
-    const token = await this.authService.getValidToken(phoneNumber);
+
     if (!token) {
       await this.handleUnauthenticated(phoneNumber, type, text, job.id);
       return;
@@ -413,6 +396,9 @@ export class WhatsappInboundProcessor extends WorkerHost {
         phoneNumber,
         extracted,
       );
+
+      console.log('draft created', correlationId);
+
       const code = await this.webviewAuthService.mintExchangeCode(
         phoneNumber,
         correlationId,
@@ -435,6 +421,18 @@ export class WhatsappInboundProcessor extends WorkerHost {
           this.whatsappClient.sendTextMessage(
             phoneNumber,
             error.reason === 'PLAN_LIMIT' ? PLAN_LIMIT_REPLY : NOT_READY_REPLY,
+          ),
+        );
+        return;
+      }
+      if (error instanceof PersonaNotFoundError) {
+        this.logger.warn(
+          `billing attempt for job ${jobId} failed: persona not found`,
+        );
+        await this.sendOrLogTerminal(jobId, () =>
+          this.whatsappClient.sendTextMessage(
+            phoneNumber,
+            error.message,
           ),
         );
         return;

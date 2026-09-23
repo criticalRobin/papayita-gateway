@@ -7,6 +7,7 @@ import { CreateOrUpdateInventoryCategoryDto } from './dto/create-or-update-inven
 import { CORE_API_CLIENT } from '../core-api/core-api.module';
 import type { CoreApiClient } from '../core-api/core-api-client.interface';
 import { CoreApiUserToken } from '../core-api/core-api-token';
+import { inventoryProductCacheKey } from '../inventory-product/inventory-product-cache-key';
 
 export const INVENTORY_CATEGORY_REDIS_CLIENT =
   'INVENTORY_CATEGORY_REDIS_CLIENT';
@@ -63,13 +64,18 @@ export class InventoryCategoryService implements InventoryCategoryClient {
 
   async delete(
     token: CoreApiUserToken,
+    emisorId: string,
     categoryId: string,
   ): Promise<InventoryCategory> {
     const deleted = await this.coreApiClient.delete<InventoryCategory>(
-      `/inventario/categorias/${categoryId}`,
+      `/inventario/categorias/${categoryId}?emisorId=${emisorId}`,
       token,
     );
-    await this.refresh(token, deleted.emisorId);
+    // Core API cascades the delete to the category's products (and its
+    // subcategories' products) — drop the product cache so the webview
+    // doesn't keep showing them as active until TTL.
+    await this.redis.del(inventoryProductCacheKey(emisorId));
+    await this.refresh(token, emisorId);
     return deleted;
   }
 

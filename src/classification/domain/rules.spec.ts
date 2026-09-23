@@ -66,6 +66,18 @@ describe('matchBillingAttempt', () => {
     expect(matchBillingAttempt(normalize(text))).toBe(true);
   });
 
+  it.each([
+    'factura para juan perez',
+    'comprobante de la venta',
+    'por favor emite una factura',
+    'buenas tardes necesito por favor que me hagas una factura',
+    'ayudame con una factura',
+    '2 pizzas y 1 cola con factura',
+    'facturar 2 productos',
+  ])('matches expanded edge-case billing phrasings "%s"', (text) => {
+    expect(matchBillingAttempt(normalize(text))).toBe(true);
+  });
+
   it('matches via the id-number signal alone, regardless of verb phrasing', () => {
     expect(
       matchBillingAttempt(normalize('factura para el cliente 1850137918')),

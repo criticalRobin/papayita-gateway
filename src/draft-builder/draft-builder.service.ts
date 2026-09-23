@@ -40,10 +40,7 @@ import { resolveCandidates } from './domain/resolve-candidates';
 import { mergeCatalogResults } from './domain/merge-catalog-results';
 import { mergeProductoDetalles } from './domain/merge-producto-detalles';
 import { findUnresolvedItems } from './domain/find-unresolved-items';
-import {
-  UnresolvedCatalogItemsError,
-  PersonaNotFoundError,
-} from './domain/errors';
+import { UnresolvedCatalogItemsError } from './domain/errors';
 import { assembleInvoice } from './domain/assemble-invoice';
 import { CandidateResolution, Draft, FinalInvoice } from './domain/types';
 import { ConfirmDraftDto } from './dto/confirm-draft.dto';
@@ -90,16 +87,11 @@ export class DraftBuilderService {
     if (tipo === '07') {
       // Consumidor final bypasses lookup — mergeComprador sets defaults
     } else if (tipo && extracted.comprador.identificacion) {
+      // Throws PersonaNotFoundError on 404 — processor relays its message
       persona = await this.personaClient.findByIdentificacion(
         token,
         extracted.comprador.identificacion,
       );
-
-      if (!persona) {
-        throw new PersonaNotFoundError(
-          'No se encontro información del cliente, por favor intenta nuevamente con su número de cédula.',
-        );
-      }
     }
 
     const comprador = mergeComprador(extracted.comprador, persona);

@@ -4,6 +4,10 @@ import type { CoreApiClient } from '../core-api/core-api-client.interface';
 import type { CoreApiUserToken } from '../core-api/core-api-token';
 import { TerminalCoreApiError } from '../core-api/core-api.errors';
 import { PersonaLookupClient, PersonaRecord } from './persona-lookup.interface';
+import { PersonaNotFoundError } from './persona.errors';
+
+const PERSONA_NOT_FOUND_FALLBACK =
+  'No se encontro información del cliente, por favor intenta nuevamente con su número de cédula.';
 
 @Injectable()
 export class PersonaService implements PersonaLookupClient {
@@ -14,7 +18,7 @@ export class PersonaService implements PersonaLookupClient {
   async findByIdentificacion(
     token: CoreApiUserToken,
     identificacion: string,
-  ): Promise<PersonaRecord | null> {
+  ): Promise<PersonaRecord> {
     try {
       return await this.coreApiClient.get<PersonaRecord>(
         `/personas/buscar/${identificacion}`,
@@ -22,7 +26,9 @@ export class PersonaService implements PersonaLookupClient {
       );
     } catch (error) {
       if (error instanceof TerminalCoreApiError && error.status === 404) {
-        return null;
+        throw new PersonaNotFoundError(
+          error.coreApiMessage ?? PERSONA_NOT_FOUND_FALLBACK,
+        );
       }
       throw error;
     }

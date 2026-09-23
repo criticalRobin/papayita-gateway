@@ -14,6 +14,7 @@ import { PlanGateBlockedError } from '../plan-gate/plan-gate.errors';
 import type { ConfigService } from '@nestjs/config';
 import { DraftBuilderService } from './draft-builder.service';
 import { UnresolvedCatalogItemsError } from './domain/errors';
+import { PersonaNotFoundError } from '../persona/persona.errors';
 import { FormaPago } from './domain/types';
 
 // Loose mock shapes (not Partial<RealService>) — referencing a real class's
@@ -58,6 +59,16 @@ const emisorProfile = {
   contribuyenteRimpe: 'CONTRIBUYENTE RÉGIMEN RIMPE',
 };
 
+const personaRecord = {
+  id: 'p1',
+  tipoIdentificacion: '05',
+  identificacion: '1850137918',
+  razonSocial: 'TITE HARO RAMIRO MATIAS',
+  direccion: null,
+  telefono: null,
+  email: null,
+};
+
 function makeService(overrides: MockOverrides = {}) {
   const authService = {
     getValidToken: jest.fn().mockResolvedValue(token),
@@ -70,7 +81,7 @@ function makeService(overrides: MockOverrides = {}) {
     ...overrides.catalogClient,
   };
   const personaClient = {
-    findByIdentificacion: jest.fn().mockResolvedValue(null),
+    findByIdentificacion: jest.fn().mockResolvedValue(personaRecord),
     ...overrides.personaClient,
   };
   const emisorClient = {
@@ -255,6 +266,23 @@ describe('DraftBuilderService', () => {
       await expect(
         service.buildDraft('+593993908744', extracted),
       ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it("propagates PersonaNotFoundError with Core API's message and does not store DRAFT_READY", async () => {
+      const coreApiMessage =
+        'La persona con identificación "1850137918" no existe en el SRI. Verifique el número de cedula o RUC.';
+      const { service, applyEvent } = makeService({
+        personaClient: {
+          findByIdentificacion: jest
+            .fn()
+            .mockRejectedValue(new PersonaNotFoundError(coreApiMessage)),
+        },
+      });
+
+      await expect(
+        service.buildDraft('+593993908744', extracted),
+      ).rejects.toThrow(coreApiMessage);
+      expect(applyEvent).not.toHaveBeenCalled();
     });
 
     it('throws UnresolvedCatalogItemsError and does not store DRAFT_READY when a term has zero catalog candidates', async () => {

@@ -26,6 +26,10 @@ export const LOGIN_CTA_BUTTON = 'Iniciar sesión';
 export const DRAFT_CTA_BODY =
   'Ya casi terminamos tu factura. Revisa y confirma los datos aquí:';
 export const DRAFT_CTA_BUTTON = 'Ver borrador';
+// Last-resort reply when a job exhausts its BullMQ retries — the user must
+// never be left without any answer.
+export const PROCESSING_FAILURE_REPLY =
+  'No pudimos procesar tu mensaje en este momento, por favor intenta de nuevo en unos minutos.';
 export const BILLING_FAILURE_REPLY =
   'No pudimos procesar tu solicitud de facturación, por favor intenta de nuevo.';
 // Billing correction window — one message listing every open problem.
@@ -40,6 +44,10 @@ export const BILLING_ISSUES_REPLY = (
       case 'identificacion_no_encontrada':
         // Core API's detalle is already plain-language Spanish.
         return `• ${issue.detalle} Envíame la cédula o RUC correcto.`;
+      case 'identificacion_invalida':
+        return issue.motivo === 'faltante'
+          ? '• No encontré la cédula o RUC del cliente. Envíame la cédula (10 dígitos) o el RUC (13 dígitos), o escribe "consumidor final".'
+          : `• "${issue.identificacion}" no es una cédula (10 dígitos) ni un RUC (13 dígitos) válido. Envíame el número correcto.`;
       case 'producto_no_encontrado':
         return `• No encontré "${issue.termino}" en tu catálogo. Dime el nombre correcto, o agrégalo con "administrar productos" y luego escribe "listo".`;
     }

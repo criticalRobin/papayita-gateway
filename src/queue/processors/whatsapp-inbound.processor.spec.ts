@@ -32,10 +32,21 @@ import {
   InboundMessageJobDto,
   InboundMessageType,
 } from '../dto/inbound-message-job.dto';
+import { PROCESSING_FAILURE_REPLY } from '../constants/whatsapp-replies.constants';
 import { WhatsappInboundProcessor } from './whatsapp-inbound.processor';
 
-function makeJob(data: InboundMessageJobDto): Job<InboundMessageJobDto> {
-  return { id: data.whatsappMessageId, data } as Job<InboundMessageJobDto>;
+// Defaults to the first of 3 attempts (queue.module.ts) — retryable errors
+// propagate silently. Pass attemptsMade: 2 to simulate the final attempt.
+function makeJob(
+  data: InboundMessageJobDto,
+  attemptsMade = 0,
+): Job<InboundMessageJobDto> {
+  return {
+    id: data.whatsappMessageId,
+    data,
+    attemptsMade,
+    opts: { attempts: 3 },
+  } as Job<InboundMessageJobDto>;
 }
 
 const extractedBillingAttempt = {
@@ -729,6 +740,29 @@ describe('WhatsappInboundProcessor', () => {
       );
       expect(sendCtaMessage).not.toHaveBeenCalled();
       expect(sendTextMessage).not.toHaveBeenCalled();
+    });
+
+    it('sends one generic reply and still fails the job when the retryable error hits the final attempt', async () => {
+      buildDraft.mockRejectedValue(new RetryableCoreApiError('network blip'));
+      const job = makeJob(
+        {
+          phoneNumber: '5219999999999',
+          whatsappMessageId: 'wamid.billing-retryable-final',
+          type: InboundMessageType.TEXT,
+          text: '2 panes a 0.50',
+        },
+        2,
+      );
+
+      await expect(processor.process(job)).rejects.toThrow(
+        RetryableCoreApiError,
+      );
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledTimes(1);
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        '5219999999999',
+        PROCESSING_FAILURE_REPLY,
+      );
     });
 
     it('sends the plan-limit reply (no CTA, no LLM call) when the plan gate blocks with PLAN_LIMIT', async () => {

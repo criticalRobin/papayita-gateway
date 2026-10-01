@@ -64,6 +64,7 @@ import {
   DRAFT_CTA_BODY,
   DRAFT_CTA_BUTTON,
   BILLING_FAILURE_REPLY,
+  PROCESSING_FAILURE_REPLY,
   BILLING_ISSUES_REPLY,
   BILLING_FIX_EXHAUSTED_REPLY,
   BILLING_CANCELLED_REPLY,
@@ -162,6 +163,35 @@ export class WhatsappInboundProcessor extends WorkerHost {
   }
 
   async process(job: Job<InboundMessageJobDto>): Promise<void> {
+    try {
+      await this.handle(job);
+    } catch (error) {
+      // Retryable failures propagate so BullMQ retries — but on the last
+      // attempt nobody else will answer, so send one generic reply before
+      // the job is marked failed. Never stays silent.
+      const isFinalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+      if (isFinalAttempt) {
+        this.logger.error(
+          `job ${job.id} failed on its final attempt: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        try {
+          await this.sendOrLogTerminal(job.id, () =>
+            this.whatsappClient.sendTextMessage(
+              job.data.phoneNumber,
+              PROCESSING_FAILURE_REPLY,
+            ),
+          );
+        } catch (sendError) {
+          this.logger.error(
+            `could not send final-failure reply for job ${job.id}: ${sendError instanceof Error ? sendError.message : String(sendError)}`,
+          );
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async handle(job: Job<InboundMessageJobDto>): Promise<void> {
     const { phoneNumber, type, text, mediaId, fileName, whatsappMessageId } =
       job.data;
     const token = await this.authService.getValidToken(phoneNumber);

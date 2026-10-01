@@ -303,6 +303,41 @@ describe('DraftBuilderService', () => {
       expect(applyEvent).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['missing', null, 'faltante'],
+      ['wrong-length', '185013791', 'formato'],
+      ['bad check digit', '1850137912', 'digito_verificador'],
+    ])(
+      'reports a %s identificacion without a persona lookup and does not store DRAFT_READY',
+      async (_label, identificacion, motivo) => {
+        const findByIdentificacion = jest.fn();
+        const { service, applyEvent } = makeService({
+          personaClient: { findByIdentificacion },
+          catalogClient: {
+            searchBatch: jest
+              .fn()
+              .mockResolvedValue([
+                { termino: 'play station 5', productos: [ps5Candidate] },
+              ]),
+          },
+        });
+
+        const error = await service
+          .buildDraft('+593993908744', {
+            ...extracted,
+            comprador: { ...extracted.comprador, identificacion },
+          })
+          .catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(IncompleteBillingAttemptError);
+        expect((error as IncompleteBillingAttemptError).issues).toEqual([
+          { kind: 'identificacion_invalida', identificacion, motivo },
+        ]);
+        expect(findByIdentificacion).not.toHaveBeenCalled();
+        expect(applyEvent).not.toHaveBeenCalled();
+      },
+    );
+
     it('reports a zero-candidate term as a producto issue and does not store DRAFT_READY', async () => {
       const { service, applyEvent } = makeService({
         catalogClient: {

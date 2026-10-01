@@ -5,18 +5,14 @@ const validPayload = {
   comprador: {
     tipoIdentificacion: '05',
     identificacion: '1850137918',
-    razonSocial: 'Matias Tite',
   },
   items: [
     {
       idCliente: 'item-1',
       textoConsulta: 'coca cola',
       cantidad: 2,
-      precioMencionado: 1.5,
     },
   ],
-  precioTotalMencionado: 3,
-  formaPagoMencionada: null,
 };
 
 describe('parseExtractionResponse', () => {

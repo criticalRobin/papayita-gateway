@@ -13,7 +13,7 @@ import type { PlanGateService } from '../plan-gate/plan-gate.service';
 import { PlanGateBlockedError } from '../plan-gate/plan-gate.errors';
 import type { ConfigService } from '@nestjs/config';
 import { DraftBuilderService } from './draft-builder.service';
-import { UnresolvedCatalogItemsError } from './domain/errors';
+import { IncompleteBillingAttemptError } from './domain/errors';
 import { PersonaNotFoundError } from '../persona/persona.errors';
 import { FormaPago } from './domain/types';
 
@@ -206,6 +206,8 @@ const ps5Candidate = {
   unidadMedida: 'Unidad',
   precioUnitario: 499.99,
   impuestoId: null,
+  impuestoDescripcion: 'IVA 15%',
+  impuestoPorcentaje: 15,
 };
 
 const ps5ProductoDetalle = {
@@ -268,7 +270,7 @@ describe('DraftBuilderService', () => {
       ).rejects.toThrow(UnauthorizedException);
     });
 
-    it("propagates PersonaNotFoundError with Core API's message and does not store DRAFT_READY", async () => {
+    it('reports a persona 404 as an identificacion issue and does not store DRAFT_READY', async () => {
       const coreApiMessage =
         'La persona con identificación "1850137918" no existe en el SRI. Verifique el número de cedula o RUC.';
       const { service, applyEvent } = makeService({
@@ -277,15 +279,31 @@ describe('DraftBuilderService', () => {
             .fn()
             .mockRejectedValue(new PersonaNotFoundError(coreApiMessage)),
         },
+        catalogClient: {
+          searchBatch: jest
+            .fn()
+            .mockResolvedValue([
+              { termino: 'play station 5', productos: [ps5Candidate] },
+            ]),
+        },
       });
 
-      await expect(
-        service.buildDraft('+593993908744', extracted),
-      ).rejects.toThrow(coreApiMessage);
+      const error = await service
+        .buildDraft('+593993908744', extracted)
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(IncompleteBillingAttemptError);
+      expect((error as IncompleteBillingAttemptError).issues).toEqual([
+        {
+          kind: 'identificacion_no_encontrada',
+          identificacion: '1850137918',
+          detalle: coreApiMessage,
+        },
+      ]);
       expect(applyEvent).not.toHaveBeenCalled();
     });
 
-    it('throws UnresolvedCatalogItemsError and does not store DRAFT_READY when a term has zero catalog candidates', async () => {
+    it('reports a zero-candidate term as a producto issue and does not store DRAFT_READY', async () => {
       const { service, applyEvent } = makeService({
         catalogClient: {
           searchBatch: jest
@@ -298,11 +316,48 @@ describe('DraftBuilderService', () => {
         .buildDraft('+593993908744', extracted)
         .catch((e: unknown) => e);
 
-      expect(error).toBeInstanceOf(UnresolvedCatalogItemsError);
-      expect((error as UnresolvedCatalogItemsError).missingTerms).toEqual([
-        'play station 5',
+      expect(error).toBeInstanceOf(IncompleteBillingAttemptError);
+      expect((error as IncompleteBillingAttemptError).issues).toEqual([
+        { kind: 'producto_no_encontrado', termino: 'play station 5' },
       ]);
       expect(applyEvent).not.toHaveBeenCalled();
+    });
+
+    it('collects persona and catalog issues in one error so the user gets a single reply', async () => {
+      const { service, catalogClient } = makeService({
+        personaClient: {
+          findByIdentificacion: jest
+            .fn()
+            .mockRejectedValue(new PersonaNotFoundError('no existe')),
+        },
+        catalogClient: {
+          searchBatch: jest
+            .fn()
+            .mockResolvedValue([{ termino: 'play station 5', productos: [] }]),
+        },
+      });
+
+      const error = await service
+        .buildDraft('+593993908744', extracted)
+        .catch((e: unknown) => e);
+
+      expect(catalogClient.searchBatch).toHaveBeenCalled();
+      expect(
+        (error as IncompleteBillingAttemptError).issues.map((i) => i.kind),
+      ).toEqual(['identificacion_no_encontrada', 'producto_no_encontrado']);
+    });
+
+    it('propagates non-404 persona lookup failures untouched', async () => {
+      const boom = new Error('core api down');
+      const { service } = makeService({
+        personaClient: {
+          findByIdentificacion: jest.fn().mockRejectedValue(boom),
+        },
+      });
+
+      await expect(service.buildDraft('+593993908744', extracted)).rejects.toBe(
+        boom,
+      );
     });
   });
 
@@ -368,6 +423,7 @@ describe('DraftBuilderService', () => {
             unidadMedida: ps5Candidate.unidadMedida,
             cantidad: 1,
             precioUnitario: ps5Candidate.precioUnitario,
+            impuestoPorcentaje: ps5Candidate.impuestoPorcentaje,
             descuento: 0,
           },
         },

@@ -11,6 +11,8 @@ function product(overrides: Partial<CatalogProduct> = {}): CatalogProduct {
     unidadMedida: 'Unidad',
     precioUnitario: 10,
     impuestoId: null,
+    impuestoDescripcion: 'IVA 15%',
+    impuestoPorcentaje: 15,
     ...overrides,
   };
 }

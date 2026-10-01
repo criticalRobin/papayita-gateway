@@ -48,6 +48,8 @@ export interface DetalleDraft {
   unidadMedida: string | null;
   cantidad: number;
   precioUnitario: number | null;
+  // Selected candidate's IVA rate, display-only for the webview.
+  impuestoPorcentaje: number | null;
   descuento: number;
 }
 

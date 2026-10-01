@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { LlmClient } from './llm-client.interface';
 import { GoogleGenAI } from '@google/genai';
-import { extractionPromptTemplate } from './prompt';
+import { extractionPromptTemplate, refinementPromptTemplate } from './prompt';
 import { parseExtractionResponse } from './domain/parse-extraction-response';
 import { ExtractedBillingAttempt } from './domain/types';
 import { ExtractionParseError } from './extraction.errors';
@@ -16,7 +16,18 @@ export class LlmService implements LlmClient {
   ) {}
 
   async extract(text: string): Promise<ExtractedBillingAttempt> {
-    const prompt: string = this.buildPrompt(text);
+    return this.run(this.buildPrompt(text));
+  }
+
+  async refine(
+    previous: ExtractedBillingAttempt,
+    problemas: string[],
+    messages: string[],
+  ): Promise<ExtractedBillingAttempt> {
+    return this.run(refinementPromptTemplate(previous, problemas, messages));
+  }
+
+  private async run(prompt: string): Promise<ExtractedBillingAttempt> {
     const interaction = await this.client.interactions
       .create({
         model: this.model,

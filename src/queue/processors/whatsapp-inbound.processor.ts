@@ -10,6 +10,7 @@ import type { SttClient } from '../../stt/stt-client.interface';
 import { TerminalSttError } from '../../stt/stt.errors';
 import { ClassificationService } from '../../classification/classification.service';
 import {
+  applyRules,
   extractIdNumber,
   matchManageInventoryCommand,
   normalize,
@@ -18,8 +19,21 @@ import { ConversationStateService } from '../../conversation-state/conversation-
 import { AuthService } from '../../auth/auth.service';
 import { WebviewAuthService } from '../../webview-auth/webview-auth.service';
 import { DraftBuilderService } from '../../draft-builder/draft-builder.service';
-import { UnresolvedCatalogItemsError } from '../../draft-builder/domain/errors';
-import { PersonaNotFoundError } from '../../persona/persona.errors';
+import {
+  BillingIssue,
+  IncompleteBillingAttemptError,
+  describeBillingIssue,
+} from '../../draft-builder/domain/errors';
+import { applyFollowUpPatch } from '../../draft-builder/domain/apply-follow-up-patch';
+import {
+  BillingContext,
+  MAX_BILLING_FIX_ATTEMPTS,
+  isBillingContextExhausted,
+  recordBillingAttempt,
+  remainingBillingAttempts,
+  startBillingContext,
+} from '../../conversation-state/domain/billing-context';
+import type { ExtractedBillingAttempt } from '../../extraction/domain/types';
 import { CreditNoteService } from '../../credit-note/credit-note.service';
 import { ExtractionParseError } from '../../extraction/extraction.errors';
 import { TerminalCoreApiError } from '../../core-api/core-api.errors';
@@ -50,7 +64,9 @@ import {
   DRAFT_CTA_BODY,
   DRAFT_CTA_BUTTON,
   BILLING_FAILURE_REPLY,
-  UNRESOLVED_PRODUCTS_REPLY,
+  BILLING_ISSUES_REPLY,
+  BILLING_FIX_EXHAUSTED_REPLY,
+  BILLING_CANCELLED_REPLY,
   INVENTORY_CTA_BODY,
   INVENTORY_CTA_BUTTON,
   CREDIT_NOTE_CTA_BODY,
@@ -102,6 +118,17 @@ function isHelpCommand(text: string | undefined): boolean {
     .trim()
     .toLowerCase();
   return normalized === 'ayuda' || normalized === 'help' || normalized === '?';
+}
+
+// Only meaningful while the billing correction window is open — outside it
+// "cancelar" goes through normal classification like any other text.
+function isCancelCommand(text: string): boolean {
+  const normalized = text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase();
+  return normalized === 'cancelar' || normalized === 'cancel';
 }
 
 // buildReply()/buildClassifiedReply()/buildAudioReply() return one of these:
@@ -345,14 +372,24 @@ export class WhatsappInboundProcessor extends WorkerHost {
     }
   }
 
-  // Gate: classification only runs when the conversation is idle. If the
-  // user is mid-billing-flow, skip straight past classification.
+  // Gate: classification only runs when the conversation is idle. An open
+  // billing correction window takes the message as a follow-up instead;
+  // any other mid-flow state gets the "still processing" reply.
   private async buildClassifiedReply(
     phoneNumber: string,
     text: string,
     jobId: string | number | undefined,
   ): Promise<ReplyOutcome> {
     const record = await this.conversationStateService.getState(phoneNumber);
+    if (record.state === 'awaiting_billing_fix' && record.billingContext) {
+      await this.handleBillingFollowUp(
+        phoneNumber,
+        text,
+        record.billingContext,
+        jobId,
+      );
+      return { kind: 'handled' };
+    }
     if (record.state !== 'idle') {
       return {
         kind: 'text',
@@ -380,25 +417,100 @@ export class WhatsappInboundProcessor extends WorkerHost {
     }
   }
 
-  // Billing attempts get exactly one message: a CTA linking to the
-  // confirmation webview (success), or a hardcoded failure text (no CTA).
-  // Never both, never a separate "processing" message — the 2-message/bundle
-  // rules (project-info.md constraints #2-3) apply per invoice interaction,
-  // and this is message 1 of 2.
+  // Billing attempts get exactly one message per inbound message: a CTA
+  // linking to the confirmation webview (success), a correction-window reply
+  // naming what to fix, or a hardcoded failure text. Never both, never a
+  // separate "processing" message — the 2-message/bundle rules
+  // (project-info.md constraints #2-3) apply per invoice interaction, and the
+  // CTA is message 1 of 2. Correction replies are the bounded exception
+  // (max MAX_BILLING_FIX_ATTEMPTS, see billing-context.ts).
   private async handleBillingAttempt(
     phoneNumber: string,
     text: string,
     jobId: string | number | undefined,
   ): Promise<void> {
+    await this.runBillingAttempt(
+      phoneNumber,
+      jobId,
+      () => this.llmClient.extract(text),
+      (extracted, issues) => startBillingContext(text, extracted, issues),
+      null,
+    );
+  }
+
+  // A message arriving while the correction window is open. "cancelar"
+  // closes it; a rule-matched full billing request replaces it (rules only,
+  // never embeddings — a bare cédula or "era chompa azul" must not count);
+  // anything else is treated as a correction.
+  private async handleBillingFollowUp(
+    phoneNumber: string,
+    text: string,
+    context: BillingContext,
+    jobId: string | number | undefined,
+  ): Promise<void> {
+    if (isCancelCommand(text)) {
+      await this.conversationStateService.reset(phoneNumber);
+      await this.sendOrLogTerminal(jobId, () =>
+        this.whatsappClient.sendTextMessage(
+          phoneNumber,
+          BILLING_CANCELLED_REPLY,
+        ),
+      );
+      return;
+    }
+
+    if (applyRules(text) === 'billing_attempt') {
+      this.logger.log(
+        `billing-fix: new billing request replaces open context (job ${jobId})`,
+      );
+      await this.conversationStateService.applyEvent(phoneNumber, {
+        type: 'BILLING_CONTEXT_CLEARED',
+      });
+      await this.handleBillingAttempt(phoneNumber, text, jobId);
+      return;
+    }
+
+    await this.runBillingAttempt(
+      phoneNumber,
+      jobId,
+      async () =>
+        applyFollowUpPatch(context.extracted, context.issues, text) ??
+        this.llmClient.refine(
+          context.extracted,
+          context.issues.map(describeBillingIssue),
+          [...context.messages, text],
+        ),
+      (extracted, issues) =>
+        recordBillingAttempt(context, text, extracted, issues),
+      context,
+    );
+  }
+
+  // Shared by the first billing message and correction-window follow-ups.
+  // buildDraft() is the actual "can we invoice this?" check — the LLM only
+  // produces/patches the extraction. `priorContext` is set for follow-ups:
+  // terminal failures close the window; retryable ones leave it untouched so
+  // the BullMQ retry replays the same follow-up against the same context.
+  private async runBillingAttempt(
+    phoneNumber: string,
+    jobId: string | number | undefined,
+    resolveExtraction: () => Promise<ExtractedBillingAttempt>,
+    nextContext: (
+      extracted: ExtractedBillingAttempt,
+      issues: BillingIssue[],
+    ) => BillingContext,
+    priorContext: BillingContext | null,
+  ): Promise<void> {
+    let extracted: ExtractedBillingAttempt | null = null;
     try {
       await this.planGateService.assertBillingAllowed(phoneNumber);
-      const extracted = await this.llmClient.extract(text);
+      extracted = await resolveExtraction();
+      // Persists DRAFT_READY, which also clears any open billing context.
       const { correlationId } = await this.draftBuilderService.buildDraft(
         phoneNumber,
         extracted,
       );
-
-      console.log('draft created', correlationId);
+      this.logger.log(`draft created for job ${jobId}`);
 
       const code = await this.webviewAuthService.mintExchangeCode(
         phoneNumber,
@@ -414,6 +526,36 @@ export class WhatsappInboundProcessor extends WorkerHost {
         ),
       );
     } catch (error) {
+      if (error instanceof IncompleteBillingAttemptError && extracted) {
+        await this.advanceBillingWindow(
+          phoneNumber,
+          jobId,
+          nextContext(extracted, error.issues),
+        );
+        return;
+      }
+      if (error instanceof ExtractionParseError && priorContext) {
+        // Unparseable follow-up still consumes an attempt — same issues.
+        this.logger.warn(
+          `billing-fix: follow-up extraction failed for job ${jobId}: ${error.message}`,
+        );
+        await this.advanceBillingWindow(
+          phoneNumber,
+          jobId,
+          nextContext(priorContext.extracted, priorContext.issues),
+        );
+        return;
+      }
+
+      const terminal =
+        error instanceof PlanGateBlockedError ||
+        error instanceof TerminalCoreApiError;
+      if (terminal && priorContext) {
+        await this.conversationStateService.applyEvent(phoneNumber, {
+          type: 'BILLING_CONTEXT_CLEARED',
+        });
+      }
+
       if (error instanceof PlanGateBlockedError) {
         this.logger.warn(
           `billing attempt for job ${jobId} blocked: ${error.reason} — ${error.detalle}`,
@@ -422,28 +564,6 @@ export class WhatsappInboundProcessor extends WorkerHost {
           this.whatsappClient.sendTextMessage(
             phoneNumber,
             error.reason === 'PLAN_LIMIT' ? PLAN_LIMIT_REPLY : NOT_READY_REPLY,
-          ),
-        );
-        return;
-      }
-      if (error instanceof PersonaNotFoundError) {
-        this.logger.warn(
-          `billing attempt for job ${jobId} failed: persona not found`,
-        );
-        // Core API's 404 message is already plain-language Spanish — relay as-is
-        await this.sendOrLogTerminal(jobId, () =>
-          this.whatsappClient.sendTextMessage(phoneNumber, error.message),
-        );
-        return;
-      }
-      if (error instanceof UnresolvedCatalogItemsError) {
-        this.logger.warn(
-          `billing attempt for job ${jobId} has unresolved catalog items: ${error.missingTerms.join(', ')}`,
-        );
-        await this.sendOrLogTerminal(jobId, () =>
-          this.whatsappClient.sendTextMessage(
-            phoneNumber,
-            UNRESOLVED_PRODUCTS_REPLY(error.missingTerms),
           ),
         );
         return;
@@ -465,6 +585,46 @@ export class WhatsappInboundProcessor extends WorkerHost {
       }
       throw error; // RetryableCoreApiError / unexpected — propagate so BullMQ retries the whole job
     }
+  }
+
+  // Opens the correction window (first failure) or advances it (follow-up
+  // still failing). Exactly one reply either way.
+  private async advanceBillingWindow(
+    phoneNumber: string,
+    jobId: string | number | undefined,
+    context: BillingContext,
+  ): Promise<void> {
+    const issueKinds = context.issues.map((issue) => issue.kind).join(', ');
+
+    if (isBillingContextExhausted(context)) {
+      this.logger.warn(
+        `billing-fix: window exhausted after ${context.attempts}/${MAX_BILLING_FIX_ATTEMPTS} attempts, issues=[${issueKinds}] (job ${jobId})`,
+      );
+      await this.conversationStateService.applyEvent(phoneNumber, {
+        type: 'BILLING_CONTEXT_CLEARED',
+      });
+      await this.sendOrLogTerminal(jobId, () =>
+        this.whatsappClient.sendTextMessage(
+          phoneNumber,
+          BILLING_FIX_EXHAUSTED_REPLY,
+        ),
+      );
+      return;
+    }
+
+    this.logger.log(
+      `billing-fix: attempt ${context.attempts}/${MAX_BILLING_FIX_ATTEMPTS}, issues=[${issueKinds}] (job ${jobId})`,
+    );
+    await this.conversationStateService.applyEvent(phoneNumber, {
+      type: 'BILLING_INCOMPLETE',
+      context,
+    });
+    await this.sendOrLogTerminal(jobId, () =>
+      this.whatsappClient.sendTextMessage(
+        phoneNumber,
+        BILLING_ISSUES_REPLY(context.issues, remainingBillingAttempts(context)),
+      ),
+    );
   }
 
   // Credit-note requests get exactly one message too: a CTA linking to the

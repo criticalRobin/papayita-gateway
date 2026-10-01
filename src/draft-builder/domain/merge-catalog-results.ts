@@ -32,6 +32,7 @@ export function mergeCatalogResults(
         unidadMedida: selected?.unidadMedida ?? null,
         cantidad: item.cantidad,
         precioUnitario: selected?.precioUnitario ?? null,
+        impuestoPorcentaje: selected?.impuestoPorcentaje ?? null,
         descuento: 0,
       },
     };

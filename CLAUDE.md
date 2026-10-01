@@ -125,12 +125,19 @@ conversation-state/
 State machine:
 ```
 idle → (billing attempt classified, draft built, CTA sent) → awaiting_webview_action
+idle → (billing attempt has fixable issues: cédula/RUC not in SRI, product not in catalog) → awaiting_billing_fix
+awaiting_billing_fix → (follow-up still has issues) → awaiting_billing_fix   [attempt counted, context updated]
+awaiting_billing_fix → (follow-up resolves it, CTA sent) → awaiting_webview_action
+awaiting_billing_fix → (3 follow-ups exhausted / "cancelar") → idle
+awaiting_billing_fix → (BILLING_CONTEXT_TTL_SECONDS expires) → idle   [Redis TTL]
 awaiting_webview_action → (user submits via webview) → submitting
 awaiting_webview_action → (exchange code expires unused) → idle   [handled by Redis TTL, no explicit transition needed]
 submitting → (webhook success/failure) → idle
 ```
 
-No correction-loop cap — that was a rule for the old plain-text design. Editing now happens inside the webview session before confirmation, so the state machine doesn't represent it at all.
+No correction-loop cap inside the webview — editing happens in the webview session before confirmation, so the state machine doesn't represent it.
+
+The **billing correction window** (`awaiting_billing_fix`) is different: it covers data the webview can't fix (buyer not found in SRI, zero catalog candidates). The failed attempt's structured extraction, its issues, and the messages so far are stored in `billingContext` on the conversation record. Each follow-up gets patched in one of two ways. A bare cédula/RUC is patched by regex with no LLM call. Anything else goes through `LlmClient.refine`. Then `buildDraft()` re-runs, and code (not the LLM) decides whether it's fixed. A rule-matched full billing request replaces the context. Logic lives in `conversation-state/domain/billing-context.ts` and `draft-builder/domain/apply-follow-up-patch.ts`.
 
 Registration has separate states (`awaiting_flow`, `awaiting_certificate`) using the same shape.
 
@@ -147,14 +154,14 @@ Then, entirely inside the webview session (no further WhatsApp messages):
 - User confirms → gateway **re-validates everything** against the real catalog → submits to the Core API → waits for webhook.
 - Gateway sends **one result message**: the PDF, or a plain-language error.
 
-**Total: 2 WhatsApp messages per invoice interaction, always.**
+**Total: 2 WhatsApp messages per invoice interaction**, plus at most 3 correction-window replies when the first message has unfixable-in-webview data (see state machine).
 
 ## Non-negotiable product constraints
 
 Cost-driven, confirmed with the team — don't violate without raising it explicitly:
 
 1. Every bot-to-user WhatsApp message is a real, permanent cost ($0.0113/msg), no volume discount.
-2. **Message budget: 2 messages per invoice interaction, always** — one CTA message opening the confirmation webview, one result message (PDF or error). Editing happens client-side inside the webview at zero message cost.
+2. **Message budget: 2 messages per invoice interaction, always** — one CTA message opening the confirmation webview, one result message (PDF or error). Editing happens client-side inside the webview at zero message cost. Accepted exception: the billing correction window, capped at `MAX_BILLING_FIX_ATTEMPTS` (3) deterministic template replies.
 3. **Bundle, never drip-feed** — don't send a "procesando" message separate from the CTA. One message does both.
 4. **No correction-loop cap needed** — obsolete from the plain-text design. The webview lets the user edit anything before submitting with no WhatsApp message cost per edit. What replaces it: a hard-failure/escalation path for cases the UI can't resolve (e.g. zero catalog candidates).
 5. Hardcode deterministic replies (greetings, generic errors) — don't spend an LLM call on fixed text.

@@ -20,6 +20,8 @@ describe('mergeCatalogResults', () => {
       unidadMedida: 'Unidad',
       precioUnitario: 499.99,
       impuestoId: null,
+      impuestoDescripcion: 'IVA 15%',
+      impuestoPorcentaje: 15,
     };
     const resolutions = new Map<string, CandidateResolution>([
       [
@@ -43,6 +45,7 @@ describe('mergeCatalogResults', () => {
       unidadMedida: 'Unidad',
       cantidad: 1,
       precioUnitario: 499.99,
+      impuestoPorcentaje: 15,
       descuento: 0,
     });
   });
@@ -66,6 +69,8 @@ describe('mergeCatalogResults', () => {
         unidadMedida: 'Unidad',
         precioUnitario: 15.99,
         impuestoId: null,
+        impuestoDescripcion: 'IVA 15%',
+        impuestoPorcentaje: 15,
       },
       {
         id: 'c2',
@@ -76,6 +81,8 @@ describe('mergeCatalogResults', () => {
         unidadMedida: 'Unidad',
         precioUnitario: 21.99,
         impuestoId: null,
+        impuestoDescripcion: 'IVA 15%',
+        impuestoPorcentaje: 15,
       },
     ];
     const resolutions = new Map<string, CandidateResolution>([
@@ -93,11 +100,12 @@ describe('mergeCatalogResults', () => {
       unidadMedida: null,
       cantidad: 2,
       precioUnitario: null,
+      impuestoPorcentaje: null,
       descuento: 0,
     });
   });
 
-  it('produces the same null-filled shape for an unresolved item, using precioMencionado as fallback', () => {
+  it('produces the same null-filled shape for an unresolved item', () => {
     const items = [
       {
         idCliente: 'item-3',
@@ -112,6 +120,7 @@ describe('mergeCatalogResults', () => {
 
     expect(result.resolutionStatus).toBe('unresolved');
     expect(result.candidates).toEqual([]);
-    expect(result.detalle.precioUnitario).toBe(5);
+    expect(result.detalle.precioUnitario).toBeNull();
+    expect(result.detalle.impuestoPorcentaje).toBeNull();
   });
 });

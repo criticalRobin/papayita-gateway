@@ -11,6 +11,10 @@ export interface CatalogProduct {
   unidadMedida: string;
   precioUnitario: number;
   impuestoId: string | null;
+  // Display-only (webview shows price with IVA). Final invoice impuestos
+  // still come from getDetalles at confirm time, never from these.
+  impuestoDescripcion: string | null;
+  impuestoPorcentaje: number | null;
 }
 
 export interface CatalogSearchResultGroup {

@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const extractedBillingAttemptSchema = z.object({
   comprador: z.object({
     tipoIdentificacion: z.string().nullable(),
-    identificacion: z.string().nullable()
+    identificacion: z.string().nullable(),
   }),
   items: z
     .array(

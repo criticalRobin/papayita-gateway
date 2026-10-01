@@ -1,4 +1,5 @@
 import type { PurchaseRegisteredResponse } from '../../purchases/purchases-client.interface';
+import type { BillingIssue } from '../../draft-builder/domain/errors';
 
 // Hardcoded, deterministic replies — no LLM call here (project-info.md constraint #5).
 export const STT_FAILURE_REPLY =
@@ -27,8 +28,32 @@ export const DRAFT_CTA_BODY =
 export const DRAFT_CTA_BUTTON = 'Ver borrador';
 export const BILLING_FAILURE_REPLY =
   'No pudimos procesar tu solicitud de facturación, por favor intenta de nuevo.';
-export const UNRESOLVED_PRODUCTS_REPLY = (missingTerms: string[]): string =>
-  `No encontramos en tu catálogo: ${missingTerms.join(', ')}. Agrégalos a tu inventario o revisa el nombre e intenta de nuevo.`;
+// Billing correction window — one message listing every open problem.
+// Still deterministic: issues are structured, so the template can name the
+// exact cédula/product without an LLM call.
+export const BILLING_ISSUES_REPLY = (
+  issues: BillingIssue[],
+  remainingAttempts: number,
+): string => {
+  const lines = issues.map((issue) => {
+    switch (issue.kind) {
+      case 'identificacion_no_encontrada':
+        // Core API's detalle is already plain-language Spanish.
+        return `• ${issue.detalle} Envíame la cédula o RUC correcto.`;
+      case 'producto_no_encontrado':
+        return `• No encontré "${issue.termino}" en tu catálogo. Dime el nombre correcto, o agrégalo con "administrar productos" y luego escribe "listo".`;
+    }
+  });
+  const intentos =
+    remainingAttempts === 1
+      ? 'Te queda 1 intento'
+      : `Te quedan ${remainingAttempts} intentos`;
+  return `Para armar tu factura necesito corregir esto:\n${lines.join('\n')}\n\nResponde solo con el dato corregido. ${intentos}. Escribe "cancelar" para empezar de nuevo.`;
+};
+export const BILLING_FIX_EXHAUSTED_REPLY =
+  'No pudimos completar tu factura con las correcciones enviadas. Envíame la solicitud completa de nuevo cuando quieras.';
+export const BILLING_CANCELLED_REPLY =
+  'Listo, cancelé esa factura. Envíame una nueva solicitud cuando quieras.';
 export const INVENTORY_CTA_BODY =
   'Administra tus categorías y productos desde aquí:';
 export const INVENTORY_CTA_BUTTON = 'Ver inventario';

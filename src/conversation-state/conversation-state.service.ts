@@ -77,7 +77,12 @@ export class ConversationStateService {
     if (!raw) {
       return createIdleRecord();
     }
-    return JSON.parse(raw) as ConversationRecord;
+    // Spread over the idle defaults so records written before a field
+    // existed (e.g. billingContext) still load with a complete shape.
+    return {
+      ...createIdleRecord(),
+      ...(JSON.parse(raw) as Partial<ConversationRecord>),
+    };
   }
 
   private async save(
@@ -88,7 +93,12 @@ export class ConversationStateService {
       ...record,
       updatedAt: new Date().toISOString(),
     };
-    const ttl = this.config.get<number>('CONVERSATION_STATE_TTL_SECONDS', 900);
+    // The correction window gets its own, shorter TTL so a stale context
+    // can't hijack an unrelated message sent much later.
+    const ttl =
+      record.state === 'awaiting_billing_fix'
+        ? this.config.get<number>('BILLING_CONTEXT_TTL_SECONDS', 600)
+        : this.config.get<number>('CONVERSATION_STATE_TTL_SECONDS', 900);
     await this.redis.set(
       this.key(phoneNumber),
       JSON.stringify(stamped),

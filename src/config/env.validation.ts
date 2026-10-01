@@ -36,6 +36,11 @@ export const envSchema = z.object({
     .positive()
     .default(900),
 
+  // Billing correction window lifetime (conversation-state/domain/
+  // billing-context.ts) — shorter than a normal conversation so a stale
+  // half-fixed attempt doesn't capture a message sent much later.
+  BILLING_CONTEXT_TTL_SECONDS: z.coerce.number().int().positive().default(600),
+
   CORE_API_BASE_URL: z.string().url(),
   WEBVIEW_BASE_URL: z.string().url(),
   LOGIN_CODE_TTL_SECONDS: z.coerce.number().int().positive().default(900),

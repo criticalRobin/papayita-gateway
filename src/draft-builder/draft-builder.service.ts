@@ -40,7 +40,8 @@ import { resolveCandidates } from './domain/resolve-candidates';
 import { mergeCatalogResults } from './domain/merge-catalog-results';
 import { mergeProductoDetalles } from './domain/merge-producto-detalles';
 import { findUnresolvedItems } from './domain/find-unresolved-items';
-import { UnresolvedCatalogItemsError } from './domain/errors';
+import { BillingIssue, IncompleteBillingAttemptError } from './domain/errors';
+import { PersonaNotFoundError } from '../persona/persona.errors';
 import { assembleInvoice } from './domain/assemble-invoice';
 import { CandidateResolution, Draft, FinalInvoice } from './domain/types';
 import { ConfirmDraftDto } from './dto/confirm-draft.dto';
@@ -83,15 +84,25 @@ export class DraftBuilderService {
     const tipo = deriveTipoIdentificacion(extracted.comprador.identificacion);
 
     let persona: PersonaRecord | null = null;
+    const issues: BillingIssue[] = [];
 
     if (tipo === '07') {
       // Consumidor final bypasses lookup — mergeComprador sets defaults
     } else if (tipo && extracted.comprador.identificacion) {
-      // Throws PersonaNotFoundError on 404 — processor relays its message
-      persona = await this.personaClient.findByIdentificacion(
-        token,
-        extracted.comprador.identificacion,
-      );
+      try {
+        persona = await this.personaClient.findByIdentificacion(
+          token,
+          extracted.comprador.identificacion,
+        );
+      } catch (error) {
+        if (!(error instanceof PersonaNotFoundError)) throw error;
+        // Keep going so catalog problems surface in the same reply.
+        issues.push({
+          kind: 'identificacion_no_encontrada',
+          identificacion: extracted.comprador.identificacion,
+          detalle: error.message,
+        });
+      }
     }
 
     const comprador = mergeComprador(extracted.comprador, persona);
@@ -116,13 +127,16 @@ export class DraftBuilderService {
 
     const items = mergeCatalogResults(extracted.items, resolutionByIdCliente);
 
-    const unresolved = findUnresolvedItems(items);
-    if (unresolved.length > 0) {
-      // Never send a partial-catalog draft — the webview has nothing to
-      // offer for a zero-candidate item, so don't move state past idle.
-      throw new UnresolvedCatalogItemsError(
-        unresolved.map((item) => item.textoConsulta),
-      );
+    // Never send a partial-catalog draft — the webview has nothing to
+    // offer for a zero-candidate item, so don't persist DRAFT_READY.
+    findUnresolvedItems(items).forEach((item) =>
+      issues.push({
+        kind: 'producto_no_encontrado',
+        termino: item.textoConsulta,
+      }),
+    );
+    if (issues.length > 0) {
+      throw new IncompleteBillingAttemptError(issues);
     }
 
     const correlationId = randomUUID();

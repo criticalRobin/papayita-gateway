@@ -37,6 +37,54 @@ describe('ConversationStateService', () => {
     expect(state.state).toBe('awaiting_webview_action');
   });
 
+  it('fills billingContext: null for records stored before the field existed', async () => {
+    const legacy = {
+      state: 'awaiting_webview_action',
+      pendingDocument: null,
+      correlationId: 'corr-1',
+      updatedAt: 'x',
+    };
+    const redis = makeRedis();
+    redis.get.mockResolvedValue(JSON.stringify(legacy));
+    const service = new ConversationStateService(redis as never, makeConfig());
+
+    const state = await service.getState('5219999999999');
+
+    expect(state.billingContext).toBeNull();
+    expect(state.correlationId).toBe('corr-1');
+  });
+
+  it('uses BILLING_CONTEXT_TTL_SECONDS while the correction window is open', async () => {
+    const redis = makeRedis();
+    redis.get.mockResolvedValue(null);
+    const config = {
+      get: jest.fn((key: string) =>
+        key === 'BILLING_CONTEXT_TTL_SECONDS' ? 600 : 900,
+      ),
+    } as unknown as ConfigService;
+    const service = new ConversationStateService(redis as never, config);
+
+    await service.applyEvent('5219999999999', {
+      type: 'BILLING_INCOMPLETE',
+      context: {
+        extracted: {
+          comprador: { tipoIdentificacion: null, identificacion: null },
+          items: [{ idCliente: 'item-1', textoConsulta: 'x', cantidad: 1 }],
+        },
+        issues: [{ kind: 'producto_no_encontrado', termino: 'x' }],
+        messages: ['factura x'],
+        attempts: 0,
+      },
+    });
+
+    expect(redis.set).toHaveBeenCalledWith(
+      'conversation:5219999999999',
+      expect.any(String),
+      'EX',
+      600,
+    );
+  });
+
   it('applyEvent persists the transitioned record and refreshes the TTL', async () => {
     const redis = makeRedis();
     redis.get.mockResolvedValue(null);

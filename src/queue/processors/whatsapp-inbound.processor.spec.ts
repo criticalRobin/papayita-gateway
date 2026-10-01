@@ -13,7 +13,11 @@ import { createIdleRecord } from '../../conversation-state/domain/state-machine'
 import type { AuthService } from '../../auth/auth.service';
 import type { WebviewAuthService } from '../../webview-auth/webview-auth.service';
 import type { DraftBuilderService } from '../../draft-builder/draft-builder.service';
-import { UnresolvedCatalogItemsError } from '../../draft-builder/domain/errors';
+import {
+  BillingIssue,
+  IncompleteBillingAttemptError,
+} from '../../draft-builder/domain/errors';
+import type { BillingContext } from '../../conversation-state/domain/billing-context';
 import type { CreditNoteService } from '../../credit-note/credit-note.service';
 import type { LlmClient } from '../../extraction/llm-client.interface';
 import { ExtractionParseError } from '../../extraction/extraction.errors';
@@ -63,6 +67,8 @@ describe('WhatsappInboundProcessor', () => {
   let classify: jest.Mock;
   let getState: jest.Mock;
   let extract: jest.Mock;
+  let refine: jest.Mock;
+  let applyEvent: jest.Mock;
   let getValidToken: jest.Mock;
   let logout: jest.Mock;
   let reset: jest.Mock;
@@ -106,6 +112,8 @@ describe('WhatsappInboundProcessor', () => {
     });
     getState = jest.fn().mockResolvedValue(createIdleRecord());
     extract = jest.fn().mockResolvedValue(extractedBillingAttempt);
+    refine = jest.fn().mockResolvedValue(extractedBillingAttempt);
+    applyEvent = jest.fn().mockResolvedValue(undefined);
     getValidToken = jest.fn().mockResolvedValue('valid-token');
     logout = jest.fn().mockResolvedValue(undefined);
     reset = jest.fn().mockResolvedValue(undefined);
@@ -146,11 +154,12 @@ describe('WhatsappInboundProcessor', () => {
       sendDocumentMessage,
     };
     sttClient = { transcribe };
-    llmClient = { extract };
+    llmClient = { extract, refine };
     classificationService = { classify } as unknown as ClassificationService;
     conversationStateService = {
       getState,
       reset,
+      applyEvent,
     } as unknown as ConversationStateService;
     authService = { getValidToken, logout } as unknown as AuthService;
     webviewAuthService = {
@@ -624,9 +633,12 @@ describe('WhatsappInboundProcessor', () => {
       );
     });
 
-    it('sends a text reply naming the missing products (no CTA) when draft-builder finds zero catalog candidates for an item', async () => {
+    it('opens the correction window with one reply naming every missing product (no CTA)', async () => {
       buildDraft.mockRejectedValue(
-        new UnresolvedCatalogItemsError(['pan de yuca', 'colada morada']),
+        new IncompleteBillingAttemptError([
+          { kind: 'producto_no_encontrado', termino: 'pan de yuca' },
+          { kind: 'producto_no_encontrado', termino: 'colada morada' },
+        ]),
       );
       const job = makeJob({
         phoneNumber: '5219999999999',
@@ -638,13 +650,50 @@ describe('WhatsappInboundProcessor', () => {
       await processor.process(job);
 
       expect(sendCtaMessage).not.toHaveBeenCalled();
-      expect(sendTextMessage).toHaveBeenCalledWith(
-        '5219999999999',
-        expect.stringContaining('pan de yuca'),
+      expect(sendTextMessage).toHaveBeenCalledTimes(1);
+      const [[, reply]] = sendTextMessage.mock.calls as [[string, string]];
+      expect(reply).toContain('pan de yuca');
+      expect(reply).toContain('colada morada');
+      expect(reply).toContain('3 intentos');
+      expect(applyEvent).toHaveBeenCalledWith('5219999999999', {
+        type: 'BILLING_INCOMPLETE',
+        context: {
+          extracted: extractedBillingAttempt,
+          issues: [
+            { kind: 'producto_no_encontrado', termino: 'pan de yuca' },
+            { kind: 'producto_no_encontrado', termino: 'colada morada' },
+          ],
+          messages: ['2 panes de yuca y una colada morada'],
+          attempts: 0,
+        },
+      });
+    });
+
+    it("relays Core API's persona-not-found message inside the correction reply", async () => {
+      const coreApiMessage =
+        'La persona con identificación "1111111111" no existe en el SRI.';
+      buildDraft.mockRejectedValue(
+        new IncompleteBillingAttemptError([
+          {
+            kind: 'identificacion_no_encontrada',
+            identificacion: '1111111111',
+            detalle: coreApiMessage,
+          },
+        ]),
       );
+      const job = makeJob({
+        phoneNumber: '5219999999999',
+        whatsappMessageId: 'wamid.billing-persona',
+        type: InboundMessageType.TEXT,
+        text: 'factura 2 panes al 1111111111',
+      });
+
+      await processor.process(job);
+
+      expect(sendTextMessage).toHaveBeenCalledTimes(1);
       expect(sendTextMessage).toHaveBeenCalledWith(
         '5219999999999',
-        expect.stringContaining('colada morada'),
+        expect.stringContaining(coreApiMessage),
       );
     });
 
@@ -722,6 +771,201 @@ describe('WhatsappInboundProcessor', () => {
         '5219999999999',
         expect.stringContaining('lista para facturar'),
       );
+    });
+  });
+
+  describe('billing correction window', () => {
+    const phone = '5219999999999';
+    const idIssue = {
+      kind: 'identificacion_no_encontrada' as const,
+      identificacion: '1111111111',
+      detalle: 'La persona no existe en el SRI.',
+    };
+    const productIssue = {
+      kind: 'producto_no_encontrado' as const,
+      termino: 'pan',
+    };
+    const extracted = {
+      comprador: { tipoIdentificacion: null, identificacion: '1111111111' },
+      items: [{ idCliente: 'item-1', textoConsulta: 'pan', cantidad: 2 }],
+    };
+
+    function openWindow(issues: BillingIssue[], attempts = 0): BillingContext {
+      const billingContext: BillingContext = {
+        extracted,
+        issues,
+        messages: ['factura 2 panes al 1111111111'],
+        attempts,
+      };
+      getState.mockResolvedValue({
+        ...createIdleRecord(),
+        state: 'awaiting_billing_fix',
+        billingContext,
+      });
+      return billingContext;
+    }
+
+    function followUp(text: string, id = 'wamid.fix') {
+      return makeJob({
+        phoneNumber: phone,
+        whatsappMessageId: id,
+        type: InboundMessageType.TEXT,
+        text,
+      });
+    }
+
+    it('patches a bare cédula without the LLM, rebuilds the draft, and sends the CTA', async () => {
+      openWindow([idIssue]);
+
+      await processor.process(followUp('1850137918'));
+
+      expect(classify).not.toHaveBeenCalled();
+      expect(extract).not.toHaveBeenCalled();
+      expect(refine).not.toHaveBeenCalled();
+      expect(buildDraft).toHaveBeenCalledWith(phone, {
+        ...extracted,
+        comprador: { tipoIdentificacion: null, identificacion: '1850137918' },
+      });
+      expect(sendCtaMessage).toHaveBeenCalledTimes(1);
+      expect(sendTextMessage).not.toHaveBeenCalled();
+    });
+
+    it('uses the LLM refine path for product corrections, passing issues and full history', async () => {
+      openWindow([productIssue]);
+      const refined = {
+        ...extracted,
+        items: [{ ...extracted.items[0], textoConsulta: 'pan de yuca' }],
+      };
+      refine.mockResolvedValue(refined);
+
+      await processor.process(followUp('era pan de yuca'));
+
+      expect(refine).toHaveBeenCalledWith(
+        extracted,
+        [expect.stringContaining('"pan"')],
+        ['factura 2 panes al 1111111111', 'era pan de yuca'],
+      );
+      expect(buildDraft).toHaveBeenCalledWith(phone, refined);
+      expect(sendCtaMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('advances the window with one reply when the follow-up still has issues', async () => {
+      openWindow([productIssue]);
+      refine.mockResolvedValue(extracted);
+      buildDraft.mockRejectedValue(
+        new IncompleteBillingAttemptError([productIssue]),
+      );
+
+      await processor.process(followUp('el pan normal'));
+
+      expect(applyEvent).toHaveBeenCalledWith(phone, {
+        type: 'BILLING_INCOMPLETE',
+        context: expect.objectContaining({
+          attempts: 1,
+          messages: ['factura 2 panes al 1111111111', 'el pan normal'],
+        }) as unknown,
+      });
+      expect(sendTextMessage).toHaveBeenCalledTimes(1);
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        phone,
+        expect.stringContaining('2 intentos'),
+      );
+      expect(sendCtaMessage).not.toHaveBeenCalled();
+    });
+
+    it('closes the window and sends the exhausted reply on the last failed attempt', async () => {
+      openWindow([productIssue], 2);
+      refine.mockResolvedValue(extracted);
+      buildDraft.mockRejectedValue(
+        new IncompleteBillingAttemptError([productIssue]),
+      );
+
+      await processor.process(followUp('pan'));
+
+      expect(applyEvent).toHaveBeenCalledWith(phone, {
+        type: 'BILLING_CONTEXT_CLEARED',
+      });
+      expect(applyEvent).not.toHaveBeenCalledWith(
+        phone,
+        expect.objectContaining({ type: 'BILLING_INCOMPLETE' }),
+      );
+      expect(sendTextMessage).toHaveBeenCalledTimes(1);
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        phone,
+        expect.stringContaining('solicitud completa'),
+      );
+    });
+
+    it('counts an unparseable follow-up as an attempt, keeping the previous issues', async () => {
+      const context = openWindow([productIssue]);
+      refine.mockRejectedValue(new ExtractionParseError('bad json'));
+
+      await processor.process(followUp('???? algo'));
+
+      expect(buildDraft).not.toHaveBeenCalled();
+      expect(applyEvent).toHaveBeenCalledWith(phone, {
+        type: 'BILLING_INCOMPLETE',
+        context: expect.objectContaining({
+          attempts: 1,
+          issues: context.issues,
+          extracted: context.extracted,
+        }) as unknown,
+      });
+      expect(sendTextMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('"cancelar" resets the conversation with one hardcoded reply, no LLM', async () => {
+      openWindow([productIssue]);
+
+      await processor.process(followUp('Cancelar'));
+
+      expect(reset).toHaveBeenCalledWith(phone);
+      expect(refine).not.toHaveBeenCalled();
+      expect(buildDraft).not.toHaveBeenCalled();
+      expect(sendTextMessage).toHaveBeenCalledTimes(1);
+      expect(sendTextMessage).toHaveBeenCalledWith(
+        phone,
+        expect.stringContaining('cancelé'),
+      );
+    });
+
+    it('a rule-matched full billing request replaces the open context', async () => {
+      openWindow([productIssue]);
+      const text = 'factura 3 colas al cliente 1850137918';
+
+      await processor.process(followUp(text));
+
+      expect(applyEvent).toHaveBeenCalledWith(phone, {
+        type: 'BILLING_CONTEXT_CLEARED',
+      });
+      expect(extract).toHaveBeenCalledWith(text);
+      expect(refine).not.toHaveBeenCalled();
+      expect(sendCtaMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears the window and sends the plan reply when the plan gate blocks a follow-up', async () => {
+      openWindow([idIssue]);
+      assertBillingAllowed.mockRejectedValue(
+        new PlanGateBlockedError('PLAN_LIMIT', 'limit reached'),
+      );
+
+      await processor.process(followUp('1850137918'));
+
+      expect(applyEvent).toHaveBeenCalledWith(phone, {
+        type: 'BILLING_CONTEXT_CLEARED',
+      });
+      expect(sendTextMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the window untouched on a retryable error so the BullMQ retry replays it', async () => {
+      openWindow([idIssue]);
+      buildDraft.mockRejectedValue(new RetryableCoreApiError('timeout'));
+
+      await expect(processor.process(followUp('1850137918'))).rejects.toThrow(
+        RetryableCoreApiError,
+      );
+      expect(applyEvent).not.toHaveBeenCalled();
+      expect(sendTextMessage).not.toHaveBeenCalled();
     });
   });
 

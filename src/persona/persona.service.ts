@@ -2,12 +2,17 @@ import { Inject, Injectable } from '@nestjs/common';
 import { CORE_API_CLIENT } from '../core-api/core-api.module';
 import type { CoreApiClient } from '../core-api/core-api-client.interface';
 import type { CoreApiUserToken } from '../core-api/core-api-token';
-import { TerminalCoreApiError } from '../core-api/core-api.errors';
+import {
+  RetryableCoreApiError,
+  TerminalCoreApiError,
+} from '../core-api/core-api.errors';
 import { PersonaLookupClient, PersonaRecord } from './persona-lookup.interface';
 import { PersonaNotFoundError } from './persona.errors';
 
 const PERSONA_NOT_FOUND_FALLBACK =
   'No se encontro información del cliente, por favor intenta nuevamente con su número de cédula.';
+const PERSONA_UNVERIFIABLE_MESSAGE = (identificacion: string): string =>
+  `No pude verificar la identificación ${identificacion} en el SRI.`;
 
 @Injectable()
 export class PersonaService implements PersonaLookupClient {
@@ -28,6 +33,15 @@ export class PersonaService implements PersonaLookupClient {
       if (error instanceof TerminalCoreApiError && error.status === 404) {
         throw new PersonaNotFoundError(
           error.coreApiMessage ?? PERSONA_NOT_FOUND_FALLBACK,
+        );
+      }
+      // Core API answers 502 when SRI itself rejects the number (SRI's 400
+      // is wrapped as "No se pudo consultar el servicio..."). Retrying the
+      // job hits the same rejection every time and ends with no reply at
+      // all, so surface it as a fixable issue instead.
+      if (error instanceof RetryableCoreApiError && error.status === 502) {
+        throw new PersonaNotFoundError(
+          PERSONA_UNVERIFIABLE_MESSAGE(identificacion),
         );
       }
       throw error;

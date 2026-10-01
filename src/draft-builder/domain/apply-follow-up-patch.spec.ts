@@ -50,6 +50,18 @@ describe('applyFollowUpPatch', () => {
     ).toBeNull();
   });
 
+  it('patches an identificacion_invalida issue too, even with a wrong-length number (re-validated by buildDraft)', () => {
+    const invalidIssue: BillingIssue = {
+      kind: 'identificacion_invalida',
+      identificacion: null,
+      motivo: 'faltante',
+    };
+    expect(
+      applyFollowUpPatch(extracted, [invalidIssue], 'es 185013791')?.comprador
+        .identificacion,
+    ).toBe('185013791');
+  });
+
   it('returns null with no open issues', () => {
     expect(applyFollowUpPatch(extracted, [], '1850137918')).toBeNull();
   });

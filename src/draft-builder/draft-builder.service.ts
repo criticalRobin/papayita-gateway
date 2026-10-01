@@ -40,6 +40,7 @@ import { resolveCandidates } from './domain/resolve-candidates';
 import { mergeCatalogResults } from './domain/merge-catalog-results';
 import { mergeProductoDetalles } from './domain/merge-producto-detalles';
 import { findUnresolvedItems } from './domain/find-unresolved-items';
+import { findIdentificacionProblem } from './domain/validate-identificacion';
 import { BillingIssue, IncompleteBillingAttemptError } from './domain/errors';
 import { PersonaNotFoundError } from '../persona/persona.errors';
 import { assembleInvoice } from './domain/assemble-invoice';
@@ -81,25 +82,36 @@ export class DraftBuilderService {
       throw new UnauthorizedException('not authenticated');
     }
 
-    const tipo = deriveTipoIdentificacion(extracted.comprador.identificacion);
+    const identificacion = extracted.comprador.identificacion;
+    const tipo = deriveTipoIdentificacion(identificacion);
+    const identificacionProblem = findIdentificacionProblem(identificacion);
 
     let persona: PersonaRecord | null = null;
     const issues: BillingIssue[] = [];
 
-    if (tipo === '07') {
+    if (identificacionProblem) {
+      // Never build a CTA with a missing/malformed buyer — the webview would
+      // open with nothing verifiable. No lookup either: Core API/SRI would
+      // just reject it (and SRI's rejection surfaces as a 502).
+      issues.push({
+        kind: 'identificacion_invalida',
+        identificacion,
+        motivo: identificacionProblem,
+      });
+    } else if (tipo === '07') {
       // Consumidor final bypasses lookup — mergeComprador sets defaults
-    } else if (tipo && extracted.comprador.identificacion) {
+    } else if (tipo && identificacion) {
       try {
         persona = await this.personaClient.findByIdentificacion(
           token,
-          extracted.comprador.identificacion,
+          identificacion,
         );
       } catch (error) {
         if (!(error instanceof PersonaNotFoundError)) throw error;
         // Keep going so catalog problems surface in the same reply.
         issues.push({
           kind: 'identificacion_no_encontrada',
-          identificacion: extracted.comprador.identificacion,
+          identificacion,
           detalle: error.message,
         });
       }

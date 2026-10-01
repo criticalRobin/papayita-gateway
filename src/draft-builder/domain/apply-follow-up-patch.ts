@@ -1,8 +1,11 @@
 import type { ExtractedBillingAttempt } from '../../extraction/domain/types';
 import { normalize } from '../../classification/domain/rules';
-import type { BillingIssue } from './errors';
+import { BillingIssue, isIdentificacionIssue } from './errors';
 
-const ID_NUMBER_GLOBAL = /\b\d{13}\b|\b\d{10}\b/g;
+// Any standalone digit run long enough to be an attempted cédula/RUC — a
+// wrong-length reply still patches here and gets re-reported by buildDraft's
+// validation, instead of costing an LLM refine call.
+const ID_NUMBER_GLOBAL = /\b\d{6,}\b/g;
 
 // Zero-LLM fast path for the most common correction-window follow-up: the
 // only open problem is the buyer's cédula/RUC and the user replies with just
@@ -15,8 +18,7 @@ export function applyFollowUpPatch(
   text: string,
 ): ExtractedBillingAttempt | null {
   const onlyIdentificacionIssues =
-    issues.length > 0 &&
-    issues.every((issue) => issue.kind === 'identificacion_no_encontrada');
+    issues.length > 0 && issues.every(isIdentificacionIssue);
   if (!onlyIdentificacionIssues) return null;
 
   const numbers = normalize(text).match(ID_NUMBER_GLOBAL) ?? [];

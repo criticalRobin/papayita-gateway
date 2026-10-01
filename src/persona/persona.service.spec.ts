@@ -71,6 +71,18 @@ describe('PersonaService', () => {
     ).rejects.toThrow(TerminalCoreApiError);
   });
 
+  it('turns a Core API 502 (SRI rejected the number) into PersonaNotFoundError instead of retrying', async () => {
+    const get = jest
+      .fn()
+      .mockRejectedValue(new RetryableCoreApiError('bad gateway', 502));
+    const service = new PersonaService(makeCoreApiClient(get));
+
+    const promise = service.findByIdentificacion(token, '1850137918');
+
+    await expect(promise).rejects.toThrow(PersonaNotFoundError);
+    await expect(promise).rejects.toThrow('No pude verificar');
+  });
+
   it('re-throws a retryable error', async () => {
     const get = jest
       .fn()
